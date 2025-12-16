@@ -2,6 +2,14 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
 
 from .models import User, Clinic, DoctorProfile
+from django.contrib import admin
+from .email_log import EmailLog
+
+@admin.register(EmailLog)
+class EmailLogAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "to_email", "subject", "success", "status_code")
+    search_fields = ("to_email", "subject", "response_body", "error")
+    list_filter = ("success", "provider", "created_at")
 
 
 @admin.register(User)
