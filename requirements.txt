@@ -6,3 +6,5 @@ gunicorn>=21.2
 Pillow>=10.0
 # Optional (recommended for Redis cache):
 django-redis>=5.4
+python-dotenv>=1.0
+
