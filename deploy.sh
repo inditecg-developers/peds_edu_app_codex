@@ -18,25 +18,46 @@ echo "[deploy] Installing requirements..."
 $PIP install --upgrade pip
 $PIP install -r requirements.txt
 
-echo "[deploy] Ensuring production env is preserved..."
-# Strategy:
-# - If .env.prod exists (server-managed), always use it as the source of truth.
-# - Otherwise, create .env from .env.example only if .env is missing.
-if [ -f "$PROJECT_DIR/.env.prod" ]; then
-  cp -f "$PROJECT_DIR/.env.prod" "$PROJECT_DIR/.env"
-else
-  if [ ! -f "$PROJECT_DIR/.env" ] && [ -f "$PROJECT_DIR/.env.example" ]; then
-    cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+echo "[deploy] Writing .env from CI environment variables (GitHub Actions Secrets)..."
+# IMPORTANT: This avoids .env.example completely so deploys never revert to dummy values.
+cat > "$PROJECT_DIR/.env" <<EOF
+DJANGO_SECRET_KEY=${DJANGO_SECRET_KEY:-change-me}
+DJANGO_DEBUG=${DJANGO_DEBUG:-0}
+ALLOWED_HOSTS=${ALLOWED_HOSTS:-*}
+
+DB_NAME=${DB_NAME:-peds_edu}
+DB_USER=${DB_USER:-peds_edu}
+DB_PASSWORD=${DB_PASSWORD:-}
+DB_HOST=${DB_HOST:-127.0.0.1}
+DB_PORT=${DB_PORT:-3306}
+
+APP_BASE_URL=${APP_BASE_URL:-http://35.154.221.92}
+
+SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+SENDGRID_FROM_EMAIL=${SENDGRID_FROM_EMAIL:-}
+
+CSRF_COOKIE_SECURE=${CSRF_COOKIE_SECURE:-0}
+SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-0}
+SECURE_SSL_REDIRECT=${SECURE_SSL_REDIRECT:-0}
+EOF
+
+# Minimal sanity warnings (does not print secrets)
+missing=""
+for k in APP_BASE_URL SENDGRID_API_KEY SENDGRID_FROM_EMAIL; do
+  v="$(printenv "$k" || true)"
+  if [ -z "$v" ]; then
+    missing="$missing $k"
   fi
+done
+if [ -n "$missing" ]; then
+  echo "[deploy] WARNING: missing CI env vars:$missing (ensure GitHub Secrets are mapped into the deploy step)"
 fi
 
-echo "[deploy] Loading environment (.env if present) for manage.py commands..."
-if [ -f "$PROJECT_DIR/.env" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$PROJECT_DIR/.env"
-  set +a
-fi
+echo "[deploy] Loading environment (.env) for manage.py commands..."
+set -a
+# shellcheck disable=SC1090
+source "$PROJECT_DIR/.env"
+set +a
 
 echo "[deploy] Ensuring static dir exists to avoid warnings..."
 mkdir -p "$PROJECT_DIR/static"
