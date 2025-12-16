@@ -18,10 +18,11 @@ echo "[deploy] Installing requirements..."
 $PIP install --upgrade pip
 $PIP install -r requirements.txt
 
-echo "[deploy] Ensuring .env exists (create from .env.example if missing)..."
-if [ ! -f "$PROJECT_DIR/.env" ] && [ -f "$PROJECT_DIR/.env.example" ]; then
-  cp "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
+echo "[deploy] Writing .env from .env.example (temporary, for debugging)..."
+if [ -f "$PROJECT_DIR/.env.example" ]; then
+  cp -f "$PROJECT_DIR/.env.example" "$PROJECT_DIR/.env"
 fi
+
 
 echo "[deploy] Loading environment (.env if present)..."
 if [ -f "$PROJECT_DIR/.env" ]; then
