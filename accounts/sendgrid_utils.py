@@ -98,14 +98,41 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
         )
         return ok
 
-    except Exception as e:
+        except Exception as e:
+        status_code = getattr(e, "status_code", None)
+
+        # Try to extract response body from SendGrid/python-http-client exceptions
+        body = ""
+        try:
+            raw_body = getattr(e, "body", None)
+            if raw_body is not None:
+                if isinstance(raw_body, (bytes, bytearray)):
+                    body = raw_body.decode("utf-8", errors="ignore")
+                else:
+                    body = str(raw_body)
+        except Exception:
+            body = ""
+
+        # Some exceptions store the HTTP response on e.response
+        if not body:
+            try:
+                resp = getattr(e, "response", None)
+                if resp is not None:
+                    rb = getattr(resp, "body", None)
+                    if isinstance(rb, (bytes, bytearray)):
+                        body = rb.decode("utf-8", errors="ignore")
+                    elif rb is not None:
+                        body = str(rb)
+            except Exception:
+                pass
+
         EmailLog.objects.create(
             to_email=to_email,
             subject=subject,
             provider="sendgrid",
             success=False,
-            status_code=None,
-            response_body="",
+            status_code=status_code,
+            response_body=body,
             error=f"{str(e)} | {key_fingerprint} from={from_email}",
         )
         logger.exception("SendGrid send failed")
