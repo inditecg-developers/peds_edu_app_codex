@@ -46,7 +46,6 @@ def _smtp_enabled() -> bool:
     mode = (os.getenv("EMAIL_BACKEND") or "").strip().lower()
     if mode:
         return mode == "smtp"
-    # fallback to Django settings-derived mode
     backend = getattr(settings, "EMAIL_BACKEND", "")
     return "smtp" in (backend or "").lower()
 
@@ -54,8 +53,8 @@ def _smtp_enabled() -> bool:
 def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
     """
     Sends email:
-    - Prefer SMTP if EMAIL_BACKEND=smtp (recommended workaround).
-    - Otherwise attempt SendGrid Web API.
+    - Prefer SMTP if EMAIL_BACKEND=smtp
+    - Otherwise attempt SendGrid Web API
 
     Always logs to EmailLog.
     """
@@ -87,7 +86,14 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
                 success=False,
                 status_code=None,
                 response_body="",
-                error=str(e),
+                error=(
+                    f"{type(e).__name__}: {str(e)} | "
+                    f"host={getattr(settings,'EMAIL_HOST','')} "
+                    f"port={getattr(settings,'EMAIL_PORT','')} "
+                    f"tls={getattr(settings,'EMAIL_USE_TLS','')} "
+                    f"ssl={getattr(settings,'EMAIL_USE_SSL','')} "
+                    f"user={getattr(settings,'EMAIL_HOST_USER','')}"
+                ),
             )
             logger.exception("SMTP send failed")
             return False
@@ -145,6 +151,7 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error="" if ok else f"SendGrid non-202 | {key_fingerprint} from={from_email}",
         )
+
         return ok
 
     except Exception as e:
@@ -182,5 +189,6 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error=f"{str(e)} | {key_fingerprint} from={from_email}",
         )
+
         logger.exception("SendGrid send failed")
         return False
