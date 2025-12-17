@@ -9,6 +9,8 @@ urlpatterns = [
     path("", include("sharing.urls")),
     path("accounts/", include("accounts.urls")),
     path("catalog/", include("catalog.urls")),
+    path("publisher/", include("publisher.urls")),
+
 ]
 
 if settings.DEBUG:
