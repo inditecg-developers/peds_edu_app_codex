@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+
+import hashlib
+from django.core.cache import cache
+
+from catalog.constants import LANGUAGE_CODES
 import re
 from typing import Any, Dict, List
 
@@ -185,12 +190,7 @@ class TranslitEngines:
             return sentence
 
 
-from __future__ import annotations
 
-import hashlib
-from django.core.cache import cache
-
-from catalog.constants import LANGUAGE_CODES
 
 # WhatsApp prefix templates (native language; doctor name kept as entered)
 _WA_PREFIX_TEMPLATES = {
