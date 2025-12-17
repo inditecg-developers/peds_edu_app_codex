@@ -76,16 +76,16 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             subject=subject,
             plain_text_content=text,
         )
+
         sg = SendGridAPIClient(api_key)
         resp = sg.send(message)
 
-        body = ""
         try:
             body = (resp.body or b"").decode("utf-8", errors="ignore")
         except Exception:
             body = str(resp.body)
 
-        ok = (resp.status_code == 202)
+        ok = resp.status_code == 202
 
         EmailLog.objects.create(
             to_email=to_email,
@@ -96,9 +96,10 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error="" if ok else f"SendGrid non-202 | {key_fingerprint} from={from_email}",
         )
+
         return ok
 
-        except Exception as e:
+    except Exception as e:
         status_code = getattr(e, "status_code", None)
 
         # Try to extract response body from SendGrid/python-http-client exceptions
@@ -135,5 +136,6 @@ def send_email_via_sendgrid(to_email: str, subject: str, text: str) -> bool:
             response_body=body,
             error=f"{str(e)} | {key_fingerprint} from={from_email}",
         )
+
         logger.exception("SendGrid send failed")
         return False
