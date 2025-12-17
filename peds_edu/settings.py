@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     "accounts.apps.AccountsConfig",
     "catalog.apps.CatalogConfig",
     "sharing.apps.SharingConfig",
+    "publisher.apps.PublisherConfig",
+
 ]
 
 MIDDLEWARE = [
