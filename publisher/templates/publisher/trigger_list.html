@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>Triggers</h2>
+
+  <form method="get" style="margin-bottom:12px;">
+    <input name="q" value="{{ q }}" placeholder="Search trigger code/keywords" />
+    <button type="submit">Search</button>
+    <a href="{% url 'publisher:trigger_create' %}" style="margin-left:12px;">+ New trigger</a>
+  </form>
+
+  <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+    <tr>
+      <th>Code</th>
+      <th>Cluster</th>
+      <th>Therapy</th>
+      <th>Doctor label</th>
+      <th>Active</th>
+      <th>Action</th>
+    </tr>
+    {% for r in rows %}
+      <tr>
+        <td>{{ r.code }}</td>
+        <td>{{ r.cluster.display_name }}</td>
+        <td>{{ r.primary_therapy.display_name }}</td>
+        <td>{{ r.doctor_trigger_label }}</td>
+        <td>{{ r.is_active }}</td>
+        <td><a href="{% url 'publisher:trigger_edit' r.pk %}">Edit</a></td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="6">No triggers found.</td></tr>
+    {% endfor %}
+  </table>
+{% endblock %}
