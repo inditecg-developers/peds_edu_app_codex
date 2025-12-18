@@ -145,9 +145,21 @@ def doctor_logout(request: HttpRequest) -> HttpResponse:
 
 
 def _send_password_reset_email(user: User) -> None:
+    print(f"[_send_password_reset_email] Function called for user ID={user.pk}")
+
     uid = urlsafe_base64_encode(force_bytes(user.pk))
+    print(f"[_send_password_reset_email] UID generated: {uid}")
+
     token = doctor_password_token.make_token(user)
-    link = _build_absolute_url(reverse("accounts:password_reset", kwargs={"uidb64": uid, "token": token}))
+    print(f"[_send_password_reset_email] Token generated: {token}")
+
+    link = _build_absolute_url(
+        reverse(
+            "accounts:password_reset",
+            kwargs={"uidb64": uid, "token": token}
+        )
+    )
+    print(f"[_send_password_reset_email] Password reset link generated: {link}")
 
     subject = "Reset your password"
     text = (
@@ -158,22 +170,44 @@ def _send_password_reset_email(user: User) -> None:
         "Regards,\nPatient Education Team\n"
     )
 
+    print(f"[_send_password_reset_email] Email subject prepared: {subject}")
+    print(f"[_send_password_reset_email] Sending email to: {user.email}")
+
     try:
         send_email_via_sendgrid(user.email, subject, text)
-    except Exception:
+        print(f"[_send_password_reset_email] Email successfully sent to {user.email}")
+    except Exception as e:
+        print(f"[_send_password_reset_email] ERROR while sending email: {e}")
         logger.exception("Failed sending password reset email")
 
 
 def request_password_reset(request: HttpRequest) -> HttpResponse:
-    if request.method == "POST":
-        email = (request.POST.get("email") or "").strip().lower()
-        user = User.objects.filter(email=email).first()
-        if user:
-            _send_password_reset_email(user)
+    print("[request_password_reset] Function called")
 
-        messages.success(request, "password reset instructions have been sent to your email address")
+    if request.method == "POST":
+        print("[request_password_reset] Request method is POST")
+
+        email = (request.POST.get("email") or "").strip().lower()
+        print(f"[request_password_reset] Email received: '{email}'")
+
+        user = User.objects.filter(email=email).first()
+
+        if user:
+            print(f"[request_password_reset] User found with ID={user.pk}, email={user.email}")
+            _send_password_reset_email(user)
+        else:
+            print("[request_password_reset] No user found for this email")
+
+        messages.success(
+            request,
+            "password reset instructions have been sent to your email address"
+        )
+        print("[request_password_reset] Success message added")
+
+        print("[request_password_reset] Redirecting to login page")
         return redirect("accounts:login")
 
+    print("[request_password_reset] Request method is not POST, rendering password request page")
     return render(request, "accounts/password_request.html")
 
 
