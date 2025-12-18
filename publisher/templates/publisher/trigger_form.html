@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+  <h2>{% if is_new %}New trigger{% else %}Edit trigger{% endif %}</h2>
+
+  <form method="post">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div style="color:#b00020;">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {{ form.as_p }}
+
+    <button type="submit">Save</button>
+    <a href="{% url 'publisher:trigger_list' %}" style="margin-left:12px;">Back</a>
+  </form>
+{% endblock %}
