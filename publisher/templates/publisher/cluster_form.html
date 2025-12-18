@@ -1,54 +1,139 @@
 {% extends "base.html" %}
+
 {% block content %}
-  <h2>{% if is_new %}New Bundle{% else %}Edit Bundle: {{ cluster.code }}{% endif %}</h2>
+  <h2>
+    {% if is_new %}
+      New Bundle
+    {% else %}
+      Edit Bundle: {{ cluster.code }}
+    {% endif %}
+  </h2>
 
   <form method="post">
     {% csrf_token %}
 
-    <fieldset style="margin-bottom:18px;">
+    <fieldset style="margin-bottom: 18px;">
       <legend>Bundle Details</legend>
       {{ form.as_p }}
     </fieldset>
 
-    <fieldset style="margin-bottom:18px;">
+    <fieldset style="margin-bottom: 18px;">
       <legend>Bundle Names (per language)</legend>
+
       {{ lang_fs.management_form }}
-      <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+
+      <table border="1" cellpadding="8" cellspacing="0" style="width: 100%;">
         <tr>
           <th>Language</th>
           <th>Name</th>
           <th>Delete?</th>
         </tr>
+
         {% for f in lang_fs.forms %}
           <tr>
-            <td>{{ f.language_code }}</td>
-            <td>{{ f.name }}</td>
-            <td>{{ f.DELETE }}</td>
+            <td>
+              {# REQUIRED: hidden inline form fields (id, etc.) #}
+              {% for h in f.hidden_fields %}
+                {{ h }}
+              {% endfor %}
+
+              {{ f.language_code }}
+
+              {% if f.language_code.errors %}
+                <div style="color: #b00020; font-size: 12px;">
+                  {{ f.language_code.errors }}
+                </div>
+              {% endif %}
+            </td>
+
+            <td>
+              {{ f.name }}
+
+              {% if f.name.errors %}
+                <div style="color: #b00020; font-size: 12px;">
+                  {{ f.name.errors }}
+                </div>
+              {% endif %}
+            </td>
+
+            <td>
+              {{ f.DELETE }}
+            </td>
           </tr>
+
+          {% if f.non_field_errors %}
+            <tr>
+              <td colspan="3">
+                <div style="color: #b00020; font-size: 12px;">
+                  {{ f.non_field_errors }}
+                </div>
+              </td>
+            </tr>
+          {% endif %}
         {% endfor %}
       </table>
     </fieldset>
 
-    <fieldset style="margin-bottom:18px;">
+    <fieldset style="margin-bottom: 18px;">
       <legend>Videos in this Bundle</legend>
+
       {{ vid_fs.management_form }}
-      <table border="1" cellpadding="8" cellspacing="0" style="width:100%;">
+
+      <table border="1" cellpadding="8" cellspacing="0" style="width: 100%;">
         <tr>
           <th>Video</th>
           <th>Sort Order</th>
           <th>Delete?</th>
         </tr>
+
         {% for f in vid_fs.forms %}
           <tr>
-            <td>{{ f.video }}</td>
-            <td>{{ f.sort_order }}</td>
-            <td>{{ f.DELETE }}</td>
+            <td>
+              {# REQUIRED: hidden inline form fields (id, etc.) #}
+              {% for h in f.hidden_fields %}
+                {{ h }}
+              {% endfor %}
+
+              {{ f.video }}
+
+              {% if f.video.errors %}
+                <div style="color: #b00020; font-size: 12px;">
+                  {{ f.video.errors }}
+                </div>
+              {% endif %}
+            </td>
+
+            <td>
+              {{ f.sort_order }}
+
+              {% if f.sort_order.errors %}
+                <div style="color: #b00020; font-size: 12px;">
+                  {{ f.sort_order.errors }}
+                </div>
+              {% endif %}
+            </td>
+
+            <td>
+              {{ f.DELETE }}
+            </td>
           </tr>
+
+          {% if f.non_field_errors %}
+            <tr>
+              <td colspan="3">
+                <div style="color: #b00020; font-size: 12px;">
+                  {{ f.non_field_errors }}
+                </div>
+              </td>
+            </tr>
+          {% endif %}
         {% endfor %}
       </table>
     </fieldset>
 
     <button type="submit">Save</button>
-    <a href="{% url 'publisher:cluster_list' %}" style="margin-left:12px;">Back</a>
+    <a href="{% url 'publisher:cluster_list' %}" style="margin-left: 12px;">
+      Back
+    </a>
   </form>
 {% endblock %}
