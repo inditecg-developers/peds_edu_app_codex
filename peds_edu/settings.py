@@ -141,7 +141,7 @@ SESSION_COOKIE_SECURE = env("SESSION_COOKIE_SECURE", "0") == "1"
 SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT", "0") == "1"
 
 # App base URL
-APP_BASE_URL = env("APP_BASE_URL", "http://35.154.221.92").rstrip("/")
+APP_BASE_URL = env("APP_BASE_URL", "https://portal.cpdinclinic.co.in").rstrip("/")
 
 
 
