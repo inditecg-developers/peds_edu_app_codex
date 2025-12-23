@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Already Registered{% endblock %}
+{% block header_title %}Already Registered{% endblock %}
+
+{% block content %}
+<div class="card">
+  <p>{{ message }}</p>
+
+  <div style="margin-top: 16px;">
+    <a href="{{ login_url }}" style="display:inline-block; padding:10px 14px; border-radius:12px; background:#111827; color:#ffffff; text-decoration:none;">Go to Login</a>
+  </div>
+</div>
+{% endblock %}
