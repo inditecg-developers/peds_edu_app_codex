@@ -13,8 +13,8 @@ urlpatterns = [
 
     # Trigger Clusters
     path("trigger-clusters/", views.trigger_cluster_list, name="triggercluster_list"),
-    path("trigger-clusters/new/", views.triggercluster_create, name="triggercluster_create"),
-    path("trigger-clusters/<int:pk>/", views.triggercluster_edit, name="triggercluster_edit"),
+    path("trigger-clusters/new/", views.trigger_cluster_create, name="triggercluster_create"),
+    path("trigger-clusters/<int:pk>/", views.trigger_cluster_edit, name="triggercluster_edit"),
 
     # Triggers
     path("triggers/", views.trigger_list, name="trigger_list"),
