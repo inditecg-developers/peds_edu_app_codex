@@ -4,17 +4,12 @@ import re
 import secrets
 import string
 
-from django.conf import settings
-from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
-from django.contrib.auth.models import PermissionsMixin
+from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.core.validators import RegexValidator
 from django.db import models
-from django.utils import timezone
-from .email_log import EmailLog  # noqa: F401
 
 
 INDIA_STATES_AND_UTS = [
-    # States (28)
     "Andhra Pradesh",
     "Arunachal Pradesh",
     "Assam",
@@ -43,7 +38,6 @@ INDIA_STATES_AND_UTS = [
     "Uttar Pradesh",
     "Uttarakhand",
     "West Bengal",
-    # Union Territories (8)
     "Andaman and Nicobar Islands",
     "Chandigarh",
     "Dadra and Nagar Haveli and Daman and Diu",
@@ -57,32 +51,22 @@ INDIA_STATES_AND_UTS = [
 INDIA_STATE_CHOICES = [(s, s) for s in INDIA_STATES_AND_UTS]
 
 
-def _generate_code(prefix: str = "", length: int = 8) -> str:
-    alphabet = string.ascii_uppercase + string.digits
-    return prefix + "".join(secrets.choice(alphabet) for _ in range(length))
-
-
-# ✅ Migration-safe defaults (NO lambdas)
-def default_clinic_code() -> str:
-    return _generate_code("CL", 8)
-
-
-def default_doctor_id() -> str:
-    return _generate_code("", 8)
-
-
 def extract_postal_code(address_text: str) -> str | None:
-    """Best-effort extraction of Indian PIN code (6 digits) from address."""
-    m = re.search(r"\b(\d{6})\b", address_text or "")
-    return m.group(1) if m else None
+    """Legacy helper: extract a 6-digit PIN from a free-text address."""
+    if not address_text:
+        return None
+    match = re.search(r"(\d{6})", address_text)
+    return match.group(1) if match else None
 
+
+# ---------------------------------------------------------------------
+# Custom User (email login)
+# ---------------------------------------------------------------------
 
 class UserManager(BaseUserManager):
-    use_in_migrations = True
-
-    def _create_user(self, email: str, full_name: str, password: str | None, **extra_fields):
+    def create_user(self, email, full_name="", password=None, **extra_fields):
         if not email:
-            raise ValueError("Email must be set")
+            raise ValueError("The Email must be set")
         email = self.normalize_email(email)
         user = self.model(email=email, full_name=full_name, **extra_fields)
         if password:
@@ -92,88 +76,73 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_user(self, email: str, full_name: str, password: str | None = None, **extra_fields):
-        extra_fields.setdefault("is_staff", False)
-        extra_fields.setdefault("is_superuser", False)
-        return self._create_user(email, full_name, password, **extra_fields)
-
-    def create_superuser(self, email: str, full_name: str, password: str, **extra_fields):
+    def create_superuser(self, email, full_name="", password=None, **extra_fields):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
-        if extra_fields.get("is_staff") is not True:
-            raise ValueError("Superuser must have is_staff=True")
-        if extra_fields.get("is_superuser") is not True:
-            raise ValueError("Superuser must have is_superuser=True")
-        return self._create_user(email, full_name, password, **extra_fields)
+        return self.create_user(email, full_name, password, **extra_fields)
 
 
 class User(AbstractBaseUser, PermissionsMixin):
-    """Custom user model using email as the primary identifier."""
-
     email = models.EmailField(unique=True)
-    full_name = models.CharField(max_length=255)
+    full_name = models.CharField(max_length=255, blank=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
-    date_joined = models.DateTimeField(default=timezone.now)
+
+    USERNAME_FIELD = "email"
+    REQUIRED_FIELDS = []
 
     objects = UserManager()
 
-    USERNAME_FIELD = "email"
-    REQUIRED_FIELDS = ["full_name"]
-
-    def __str__(self) -> str:
+    def __str__(self):
         return self.email
 
 
+# ---------------------------------------------------------------------
+# Clinic + DoctorProfile
+# ---------------------------------------------------------------------
+
 class Clinic(models.Model):
-    clinic_code = models.CharField(
-        max_length=12,
-        unique=True,
-        default=default_clinic_code,  # ✅ fixed
-    )
     display_name = models.CharField(max_length=255, blank=True)
     clinic_phone = models.CharField(
-        max_length=15,
+        max_length=20,
         blank=True,
-        validators=[RegexValidator(r"^\d{6,15}$", "Enter a valid phone number (digits only).")],
+        validators=[RegexValidator(r"^\d{6,15}$", "Enter a valid contact number (digits only).")],
+    )
+    clinic_whatsapp_number = models.CharField(
+        max_length=10,
+        blank=True,
+        validators=[RegexValidator(r"^\d{10}$", "Enter a 10-digit WhatsApp number (without country code).")],
     )
     address_text = models.TextField()
     postal_code = models.CharField(max_length=6, blank=True)
     state = models.CharField(max_length=64, choices=INDIA_STATE_CHOICES)
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    def __str__(self):
+        return self.display_name or f"Clinic #{self.pk}"
 
-    def __str__(self) -> str:
-        return self.display_name or self.clinic_code
+
+def default_doctor_id() -> str:
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(8))
 
 
 class DoctorProfile(models.Model):
-    user = models.OneToOneField(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="doctor_profile",
-    )
-
-    # System-generated doctor id shown on the registration form
-    doctor_id = models.CharField(
-        max_length=12,
-        unique=True,
-        default=default_doctor_id,  # ✅ fixed
-    )
-
-    clinic = models.ForeignKey(Clinic, on_delete=models.PROTECT, related_name="doctors")
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="doctor_profile")
+    doctor_id = models.CharField(max_length=20, unique=True, default=default_doctor_id)
+    clinic = models.ForeignKey(Clinic, on_delete=models.SET_NULL, null=True, blank=True)
 
     whatsapp_number = models.CharField(
         max_length=10,
+        unique=True,
         validators=[RegexValidator(r"^\d{10}$", "Enter a 10-digit WhatsApp number (without country code).")],
     )
     imc_number = models.CharField(max_length=64)
+    postal_code = models.CharField(
+        max_length=6,
+        blank=True,
+        validators=[RegexValidator(r"^\d{6}$", "Enter a valid 6-digit PIN code.")],
+    )
+    photo = models.ImageField(upload_to="doctor_photos/", null=True, blank=True)
 
-    photo = models.ImageField(upload_to="doctor_photos/", blank=True, null=True)
-
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self) -> str:
-        return f"{self.user.full_name} ({self.doctor_id})"
+    def __str__(self):
+        return f"{self.user.full_name or self.user.email} ({self.doctor_id})"
