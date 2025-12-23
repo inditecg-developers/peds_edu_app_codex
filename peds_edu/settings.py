@@ -130,7 +130,7 @@ SECURE_SSL_REDIRECT = env("SECURE_SSL_REDIRECT", "0") == "1"
 
 # ---------------- APP BASE URL ----------------
 APP_BASE_URL = env("APP_BASE_URL", "https://portal.cpdinclinic.co.in").rstrip("/")
-
+SITE_BASE_URL = APP_BASE_URL
 # ---------------- EMAIL / SENDGRID ----------------
 SENDGRID_API_KEY = env("SENDGRID_API_KEY", "").strip()
 if not SENDGRID_API_KEY:
