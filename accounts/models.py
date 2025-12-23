@@ -146,3 +146,5 @@ class DoctorProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.full_name or self.user.email} ({self.doctor_id})"
+
+
