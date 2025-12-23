@@ -41,6 +41,29 @@ fi
 echo "[deploy] Ensuring static dir exists to avoid warnings..."
 mkdir -p "$PROJECT_DIR/static"
 
+# -------------------------------------------------------------------
+# Build PIN → State directory JSON from the committed CSV (if present)
+# -------------------------------------------------------------------
+echo "[deploy] Building India PIN directory JSON (PIN -> State)..."
+PINCODE_DATA_DIR="$PROJECT_DIR/accounts/data"
+PINCODE_CSV="${PINCODE_CSV_PATH:-$PINCODE_DATA_DIR/india_pincode_directory.csv}"
+PINCODE_JSON="${PINCODE_JSON_PATH:-$PINCODE_DATA_DIR/india_pincode_directory.json}"
+
+mkdir -p "$PINCODE_DATA_DIR"
+
+if [ -f "$PINCODE_CSV" ]; then
+  # Generates/overwrites the JSON deterministically from the CSV
+  $PYTHON manage.py build_pincode_directory --input "$PINCODE_CSV" --output "$PINCODE_JSON"
+else
+  # Do not break deploy if the CSV isn't present but a previously generated JSON exists.
+  if [ -f "$PINCODE_JSON" ]; then
+    echo "[deploy] PIN CSV not found at $PINCODE_CSV; keeping existing JSON at $PINCODE_JSON"
+  else
+    echo "[deploy] ERROR: Missing both PIN CSV ($PINCODE_CSV) and JSON ($PINCODE_JSON). Cannot compute State from PIN." >&2
+    exit 1
+  fi
+fi
+
 echo "[deploy] Running migrations..."
 $PYTHON manage.py migrate --noinput --fake-initial
 
