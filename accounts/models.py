@@ -10,6 +10,10 @@ from django.db import models
 from django.utils import timezone
 
 
+# ---------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------
+
 INDIA_STATES_AND_UTS = [
     "Andhra Pradesh",
     "Arunachal Pradesh",
@@ -53,7 +57,6 @@ INDIA_STATE_CHOICES = [(s, s) for s in INDIA_STATES_AND_UTS]
 
 
 def extract_postal_code(address_text: str) -> str | None:
-    """Legacy helper: extract a 6-digit PIN from a free-text address."""
     if not address_text:
         return None
     match = re.search(r"(\d{6})", address_text)
@@ -61,7 +64,7 @@ def extract_postal_code(address_text: str) -> str | None:
 
 
 # ---------------------------------------------------------------------
-# Custom User (email login)
+# Custom User
 # ---------------------------------------------------------------------
 
 class UserManager(BaseUserManager):
@@ -89,7 +92,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
-    # ✅ FIX: DB expects this column; ensure ORM always sends a value on INSERT.
+    # matches DB expectation
     date_joined = models.DateTimeField(default=timezone.now)
 
     USERNAME_FIELD = "email"
@@ -102,36 +105,29 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 # ---------------------------------------------------------------------
-# Clinic + DoctorProfile
+# Clinic
 # ---------------------------------------------------------------------
 
 class Clinic(models.Model):
-    display_name = models.CharField(max_length=255, blank=True)
-    clinic_phone = models.CharField(
-        max_length=20,
-        blank=True,
-        validators=[RegexValidator(r"^\d{6,15}$", "Enter a valid contact number (digits only).")],
-    )
-    clinic_whatsapp_number = models.CharField(
-        max_length=10,
-        blank=True,
-        validators=[RegexValidator(r"^\d{10}$", "Enter a 10-digit WhatsApp number (without country code).")],
-    )
+    clinic_code = models.CharField(max_length=50, unique=True)
+    display_name = models.CharField(max_length=255)
+    clinic_phone = models.CharField(max_length=15)
+    clinic_whatsapp_number = models.CharField(max_length=10, blank=True, null=True)
     address_text = models.TextField()
-    postal_code = models.CharField(max_length=6, blank=True)
+    postal_code = models.CharField(max_length=6)
     state = models.CharField(max_length=64, choices=INDIA_STATE_CHOICES)
 
-    @property
-    def clinic_code(self) -> str:
-        """
-        Some parts of the code expect clinic.clinic_code.
-        If you are not storing a clinic_code column in DB, we generate a stable readable code from id.
-        """
-        return f"CLN-{self.pk:04d}" if self.pk else ""
+    # REQUIRED by DB
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.display_name or f"Clinic #{self.pk}"
+        return self.display_name
 
+
+# ---------------------------------------------------------------------
+# Doctor Profile
+# ---------------------------------------------------------------------
 
 def default_doctor_id() -> str:
     alphabet = string.ascii_uppercase + string.digits
@@ -139,22 +135,27 @@ def default_doctor_id() -> str:
 
 
 class DoctorProfile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="doctor_profile")
-    doctor_id = models.CharField(max_length=20, unique=True, default=default_doctor_id)
-    clinic = models.ForeignKey(Clinic, on_delete=models.SET_NULL, null=True, blank=True)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="doctor_profile"
+    )
 
-    whatsapp_number = models.CharField(
-        max_length=10,
-        unique=True,
-        validators=[RegexValidator(r"^\d{10}$", "Enter a 10-digit WhatsApp number (without country code).")],
-    )
+    doctor_id = models.CharField(max_length=12, unique=True, default=default_doctor_id)
+    whatsapp_number = models.CharField(max_length=10, unique=True)
     imc_number = models.CharField(max_length=64)
-    postal_code = models.CharField(
-        max_length=6,
-        blank=True,
-        validators=[RegexValidator(r"^\d{6}$", "Enter a valid 6-digit PIN code.")],
-    )
+    postal_code = models.CharField(max_length=6, blank=True, null=True)
     photo = models.ImageField(upload_to="doctor_photos/", null=True, blank=True)
 
+    clinic = models.ForeignKey(
+        Clinic,
+        on_delete=models.CASCADE,
+        db_column="clinic_id"
+    )
+
+    # REQUIRED by DB
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     def __str__(self):
-        return f"{self.user.full_name or self.user.email} ({self.doctor_id})"
+        return f"{self.user.email} ({self.doctor_id})"
