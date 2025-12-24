@@ -11,9 +11,5 @@ urlpatterns = [
     path("publisher/", include("publisher.urls")),
 ]
 
-# Serve media files (doctor photos).
-# In production, prefer Nginx, but this ensures it works even if Nginx isn't configured.
+# Serve uploaded media (doctor photos)
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
-
-# Optional: also serve static if needed (usually WhiteNoise covers /static/)
-# urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
