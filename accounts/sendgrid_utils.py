@@ -10,18 +10,15 @@ import ssl
 from dataclasses import dataclass
 from email.message import EmailMessage
 from typing import Iterable, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from django.apps import apps
 from django.conf import settings
 
-from peds_edu.aws_secrets import get_secret_string
+from peds_edu.aws_secrets import get_last_error, get_secret_string
 
-try:
-    from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail
-except Exception:
-    SendGridAPIClient = None  # type: ignore
-    Mail = None  # type: ignore
+SENDGRID_API_URL = "https://api.sendgrid.com/v3/mail/send"
 
 
 # ---------------------------------------------------------------------
@@ -43,24 +40,28 @@ def _sanitize_secret(s: str) -> str:
       - surrounding quotes
       - trailing newlines/spaces
     """
-    s = (s or "").strip().strip('"').strip("'")
+    s = (s or "").strip()
+    if not s:
+        return ""
     if s.lower().startswith("bearer "):
-        parts = s.split(None, 1)
-        s = parts[1].strip() if len(parts) > 1 else ""
+        s = s[7:].strip()
+    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
+        s = s[1:-1].strip()
     return s.strip()
 
 
 def _extract_sendgrid_key(raw: str) -> str:
     """
-    Supports secrets stored as:
-      - Plain string: "SG...."
-      - JSON: {"SENDGRID_API_KEY":"SG...."} or {"api_key":"SG...."} etc.
+    If your AWS secret is JSON, allow formats like:
+      {"SENDGRID_API_KEY": "SG..."}
+      {"api_key": "SG..."}
+    Otherwise, treat the whole secret as the key.
     """
-    raw = _sanitize_secret(raw)
+    raw = (raw or "").strip()
     if not raw:
         return ""
 
-    # JSON secret support
+    # Try JSON first
     if raw.startswith("{") and raw.endswith("}"):
         try:
             obj = json.loads(raw)
@@ -80,7 +81,7 @@ def _extract_sendgrid_key(raw: str) -> str:
         except Exception:
             pass
 
-    return raw
+    return _sanitize_secret(raw)
 
 
 def _fingerprint(secret: str) -> str:
@@ -89,6 +90,17 @@ def _fingerprint(secret: str) -> str:
         return "missing"
     h = hashlib.sha256(secret.encode("utf-8")).hexdigest()[:12]
     return f"len={len(secret)} sha256_12={h}"
+
+
+def _redacted_tail(secret: str, n: int = 4) -> str:
+    """
+    Return only the last N characters (default 4), never the full secret.
+    For very short strings, returns '<short>'.
+    """
+    secret = secret or ""
+    if len(secret) < max(1, n):
+        return "<short>"
+    return secret[-n:]
 
 
 def _aws_region() -> str:
@@ -108,23 +120,28 @@ def _aws_secret_name() -> str:
     )
 
 
-def _get_secret_string_uncached(secret_name: str, region_name: str) -> str:
+def _get_secret_string_uncached(secret_name: str, region_name: str) -> Tuple[str, Optional[str]]:
     """
-    Fetch secret from AWS Secrets Manager without using functools.lru_cache.
+    Fetch secret from AWS Secrets Manager without relying on functools.lru_cache.
 
-    peds_edu.aws_secrets.get_secret_string is lru_cached in this codebase. That is fine
-    for most settings, but for debugging and key-rotation we want the *current* value.
+    IMPORTANT: This MUST NOT raise. If AWS credentials are not available, it returns ("", "<error>").
+
+    Note:
+      - peds_edu.aws_secrets.get_secret_string is lru_cached.
+      - We attempt to call the undecorated implementation via __wrapped__ to bypass caching,
+        and then read peds_edu.aws_secrets.get_last_error() for a diagnostic string.
     """
     try:
         wrapped = getattr(get_secret_string, "__wrapped__", None)
         if wrapped is not None:
             val = wrapped(secret_name, region_name=region_name)  # type: ignore[misc]
-            return (val or "").strip()
-    except Exception:
-        pass
+        else:
+            val = get_secret_string(secret_name, region_name=region_name)
 
-    # Fallback: cached function (best effort)
-    return (get_secret_string(secret_name, region_name=region_name) or "").strip()
+        err = (get_last_error() or "").strip()
+        return (val or "").strip(), (err or None)
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
 
 
 @dataclass(frozen=True)
@@ -136,21 +153,47 @@ class _KeyCandidate:
     def fp(self) -> str:
         return _fingerprint(self.key)
 
+    @property
+    def tail(self) -> str:
+        # Tail length can be controlled via env (default 4) for debugging.
+        try:
+            n = int(os.getenv("SENDGRID_KEY_TAIL_CHARS", "4"))
+        except Exception:
+            n = 4
+        n = max(2, min(12, n))  # keep this bounded
+        return _redacted_tail(self.key, n=n)
 
-def _iter_sendgrid_api_key_candidates() -> list[_KeyCandidate]:
+
+def _get_sendgrid_api_key_candidates() -> Tuple[list[_KeyCandidate], dict]:
     """
-    Return de-duplicated candidate SendGrid API keys from multiple sources.
+    Return de-duplicated candidate SendGrid API keys from multiple sources, plus diagnostics.
 
-    IMPORTANT: We try AWS Secrets Manager *first*, because your production fix relies on
-    Secrets Manager and because env/.env values can easily be stale or incorrect.
+    Ordering:
+      0) AWS Secrets Manager (fresh read, best-effort)
+      1) Django settings
+      2) Process env (including .env loaded by settings.py)
+
+    Never raises.
     """
     region = _aws_region()
     secret_name = _aws_secret_name()
 
+    diag = {
+        "secret_name": secret_name,
+        "region": region,
+        "aws_secret_attempted": True,
+        "aws_secret_error": "",
+        "aws_secret_value_present": False,  # whether *something* was returned (not necessarily a valid key)
+    }
+
     candidates_raw: list[tuple[str, str]] = []
 
     # 0) AWS Secrets Manager first (fresh read)
-    secret_raw = _get_secret_string_uncached(secret_name, region)
+    secret_raw, secret_err = _get_secret_string_uncached(secret_name, region)
+    if secret_err:
+        diag["aws_secret_error"] = secret_err
+    if secret_raw:
+        diag["aws_secret_value_present"] = True
     secret_key = _extract_sendgrid_key(secret_raw)
     if secret_key:
         candidates_raw.append((f"aws_secrets:{secret_name}@{region}", secret_key))
@@ -163,7 +206,7 @@ def _iter_sendgrid_api_key_candidates() -> list[_KeyCandidate]:
     candidates_raw.append(("env:SENDGRID_API_KEY", os.getenv("SENDGRID_API_KEY", "") or ""))
     candidates_raw.append(("env:EMAIL_HOST_PASSWORD", os.getenv("EMAIL_HOST_PASSWORD", "") or ""))
 
-    # Normalize, extract JSON-wrapped secrets, sanitize, dedupe by fingerprint
+    # Normalize + de-dupe by fingerprint
     out: list[_KeyCandidate] = []
     seen_fp: set[str] = set()
 
@@ -177,16 +220,20 @@ def _iter_sendgrid_api_key_candidates() -> list[_KeyCandidate]:
         seen_fp.add(fp)
         out.append(_KeyCandidate(source=src, key=key))
 
-    return out
+    return out, diag
 
 
-def _resolve_from_email(from_email: Optional[str] = None) -> str:
-    # Prefer explicit parameter
+def _resolve_from_email(from_email: Optional[str]) -> str:
     if from_email and str(from_email).strip():
         return str(from_email).strip()
 
     # Settings fallbacks
     v = getattr(settings, "SENDGRID_FROM_EMAIL", None) or getattr(settings, "DEFAULT_FROM_EMAIL", None)
+    if v and str(v).strip():
+        return str(v).strip()
+
+    # Env fallbacks
+    v = os.getenv("SENDGRID_FROM_EMAIL") or os.getenv("DEFAULT_FROM_EMAIL")
     if v and str(v).strip():
         return str(v).strip()
 
@@ -212,8 +259,6 @@ def _get_backend_mode() -> str:
         if not cand:
             continue
         v = str(cand).strip().lower()
-
-        # Django backend path support
         if "console" in v:
             return "console"
         if "sendgrid" in v:
@@ -221,8 +266,9 @@ def _get_backend_mode() -> str:
         if "smtp" in v:
             return "smtp"
 
-    # Default: prefer SendGrid Web API if we can resolve a key and the library is present.
-    if SendGridAPIClient is not None and Mail is not None and _iter_sendgrid_api_key_candidates():
+    # Default: prefer SendGrid Web API if we can resolve a key
+    key_candidates, _ = _get_sendgrid_api_key_candidates()
+    if key_candidates:
         return "sendgrid"
 
     return "smtp"
@@ -269,7 +315,6 @@ def _log_email_attempt(
             error=_truncate(error or "", limit=8000),
         )
     except Exception:
-        # Never crash due to logging failures
         return
 
 
@@ -291,88 +336,115 @@ def _send_via_sendgrid_api(
     Behavior:
       - Tries AWS Secrets Manager key first (fresh read), then settings/env fallbacks.
       - If a key returns 401/403, it automatically retries with the next candidate.
+      - ALWAYS sets Authorization header: "Bearer <API_KEY>" (explicit, via urllib).
     """
-    key_candidates = _iter_sendgrid_api_key_candidates()
+    key_candidates, key_diag = _get_sendgrid_api_key_candidates()
 
     diag_base = {
         "provider": "sendgrid",
         "from_email": from_email,
         "to_count": len(to_emails),
-        "secret_name": _aws_secret_name(),
-        "region": _aws_region(),
+        "aws_secrets": key_diag,
         "candidates": [{"source": c.source, "fp": c.fp} for c in key_candidates],
+        "sendgrid_api_url": SENDGRID_API_URL,
+        "authorization_header_set": True,
     }
 
     if not key_candidates:
         return False, None, json.dumps(diag_base), "SENDGRID_API_KEY missing (no candidates found)"
 
-    if SendGridAPIClient is None or Mail is None:
-        return False, None, json.dumps(diag_base), "sendgrid python package not available at runtime"
-
-    # Simple HTML alternative improves readability in many inboxes
     safe_html = "<pre>" + html_lib.escape(plain_text or "") + "</pre>"
 
     last_status: Optional[int] = None
     last_err_text: str = ""
     last_err_body: str = ""
 
+    # Shared body (only API key differs)
+    payload = {
+        "personalizations": [{"to": [{"email": e} for e in to_emails]}],
+        "from": {"email": from_email},
+        "subject": subject,
+        "content": [
+            {"type": "text/plain", "value": plain_text or ""},
+            {"type": "text/html", "value": safe_html},
+        ],
+    }
+    payload_bytes = json.dumps(payload).encode("utf-8")
+
     for cand in key_candidates:
         api_key = cand.key
-        api_fp = cand.fp
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
 
         try:
-            message = Mail(
-                from_email=from_email,
-                to_emails=to_emails,
-                subject=subject,
-                html_content=safe_html,
-            )
-            sg = SendGridAPIClient(api_key)
-            resp = sg.send(message)
+            req = Request(SENDGRID_API_URL, data=payload_bytes, headers=headers, method="POST")
+            with urlopen(req, timeout=25) as resp:
+                status = getattr(resp, "status", None) or resp.getcode()
+                try:
+                    body = resp.read().decode("utf-8", errors="ignore")
+                except Exception:
+                    body = ""
 
-            status = getattr(resp, "status_code", None)
+            ok = isinstance(status, int) and 200 <= status < 300
+
             diag = dict(diag_base)
             diag.update(
                 {
                     "selected_source": cand.source,
-                    "sendgrid_api_key_fp": api_fp,
+                    "sendgrid_api_key_fp": cand.fp,
+                    "sendgrid_api_key_tail": cand.tail,
                     "status_code": status,
                 }
             )
-            return (200 <= int(status) < 300), int(status), json.dumps(diag), ""
 
-        except Exception as e:
-            # SendGrid python client usually raises urllib.error.HTTPError, but keep generic.
-            status = getattr(e, "status_code", None) or getattr(e, "code", None)
+            combined = json.dumps(diag)
+            if body:
+                combined += "\n" + _truncate(body, 12000)
+
+            if ok:
+                return True, int(status), combined, ""
+
             last_status = int(status) if isinstance(status, int) else None
+            last_err_text = f"HTTP {status}"
+            last_err_body = body
 
-            # Best-effort body extraction
-            err_body = ""
-            try:
-                body = getattr(e, "body", None)
-                if body:
-                    if isinstance(body, (bytes, bytearray)):
-                        err_body = body.decode("utf-8", errors="ignore")
-                    else:
-                        err_body = str(body)
-                elif hasattr(e, "read"):
-                    raw = e.read()  # type: ignore[attr-defined]
-                    if isinstance(raw, (bytes, bytearray)):
-                        err_body = raw.decode("utf-8", errors="ignore")
-                    else:
-                        err_body = str(raw)
-            except Exception:
-                err_body = ""
-
-            last_err_text = str(e)
-            last_err_body = err_body
-
-            # If unauthorized/forbidden, try next candidate (common when .env is stale).
-            if last_status in (401, 403):
+            # Wrong key / revoked key -> try next candidate
+            if status in (401, 403):
                 continue
 
-            # Other errors: still allow retry with other candidate (network flake), but keep going.
-            continue
+            # Other errors are unlikely to be fixed by switching keys, but we still allow fallback.
+            break
+
+        except HTTPError as e:
+            status = getattr(e, "code", None)
+            try:
+                body = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+            except Exception:
+                body = ""
+
+            last_status = int(status) if isinstance(status, int) else None
+            last_err_text = f"HTTPError {status}: {getattr(e, 'reason', '')}".strip()
+            last_err_body = body
+
+            # Wrong key / revoked key -> try next candidate
+            if status in (401, 403):
+                continue
+
+            break
+
+        except URLError as e:
+            last_status = None
+            last_err_text = f"URLError: {e}"
+            last_err_body = ""
+            break
+
+        except Exception as e:
+            last_status = None
+            last_err_text = f"{type(e).__name__}: {e}"
+            last_err_body = ""
+            break
 
     diag = dict(diag_base)
     diag.update(
@@ -386,7 +458,7 @@ def _send_via_sendgrid_api(
     if last_err_body:
         combined += "\n" + _truncate(last_err_body, 12000)
 
-    return False, last_status, combined, last_err_text
+    return False, last_status, combined, last_err_text or "SendGrid API send failed"
 
 
 def _send_via_smtp(
@@ -417,8 +489,22 @@ def _send_via_smtp(
         ("settings.EMAIL_HOST_PASSWORD", str(getattr(settings, "EMAIL_HOST_PASSWORD", "") or "")),
         ("env:EMAIL_HOST_PASSWORD", os.getenv("EMAIL_HOST_PASSWORD", "") or ""),
     ]
-    for c in _iter_sendgrid_api_key_candidates():
-        pw_candidates_raw.append((f"derived_from:{c.source}", c.key))
+
+    # Pull SendGrid API key candidates (these can also be used as SMTP password)
+    try:
+        key_candidates, key_diag = _get_sendgrid_api_key_candidates()
+        for c in key_candidates:
+            pw_candidates_raw.append((f"derived_from:{c.source}", c.key))
+        aws_diag = key_diag
+    except Exception as e:
+        key_candidates = []
+        aws_diag = {
+            "secret_name": _aws_secret_name(),
+            "region": _aws_region(),
+            "aws_secret_attempted": True,
+            "aws_secret_error": f"{type(e).__name__}: {e}",
+            "aws_secret_value_present": False,
+        }
 
     pw_candidates: list[_KeyCandidate] = []
     seen_fp: set[str] = set()
@@ -450,6 +536,7 @@ def _send_via_smtp(
             "probe": probe,
             "smtp_user": user,
             "smtp_password_fp": "missing",
+            "aws_secrets": aws_diag,
         }
         return False, None, json.dumps(diag), "EMAIL_HOST_PASSWORD missing (no candidates found)"
 
@@ -468,49 +555,41 @@ def _send_via_smtp(
 
             try:
                 server.ehlo()
-            except Exception:
-                pass
-
-            if use_tls and not use_ssl:
-                ctx = ssl.create_default_context()
-                server.starttls(context=ctx)
-                try:
+                if use_tls and not use_ssl:
+                    ctx = ssl.create_default_context()
+                    server.starttls(context=ctx)
                     server.ehlo()
+
+                if user and pw:
+                    server.login(user, pw)
+
+                server.send_message(msg)
+                try:
+                    server.quit()
                 except Exception:
                     pass
 
-            if user and pw:
-                server.login(user, pw)
-
-            refused = server.send_message(msg)
-
-            try:
-                server.quit()
-            except Exception:
+                diag = {
+                    "provider": "smtp",
+                    "host": host,
+                    "port": port,
+                    "use_tls": use_tls,
+                    "use_ssl": use_ssl,
+                    "probe": probe,
+                    "smtp_user": user,
+                    "smtp_password_fp": pw_fp,
+                    "smtp_password_tail": pw_cand.tail,
+                    "smtp_password_source": pw_cand.source,
+                    "aws_secrets": aws_diag,
+                }
+                return True, 250, json.dumps(diag), ""
+            finally:
                 try:
                     server.close()
                 except Exception:
                     pass
 
-            ok = len(refused) == 0
-            diag = {
-                "provider": "smtp",
-                "host": host,
-                "port": port,
-                "use_tls": use_tls,
-                "use_ssl": use_ssl,
-                "probe": probe,
-                "smtp_user": user,
-                "smtp_password_fp": pw_fp,
-                "smtp_password_source": pw_cand.source,
-                "refused_recipients": list(refused.keys()) if refused else [],
-            }
-
-            # SMTP success has no meaningful HTTP-like status code; we use 250 conventionally.
-            return ok, (250 if ok else None), json.dumps(diag), ("" if ok else "SMTP refused some recipients")
-
         except smtplib.SMTPAuthenticationError as e:
-            # Try next password candidate
             last_err = str(e)
             last_diag = {
                 "provider": "smtp",
@@ -521,9 +600,13 @@ def _send_via_smtp(
                 "probe": probe,
                 "smtp_user": user,
                 "smtp_password_fp": pw_fp,
+                "smtp_password_tail": pw_cand.tail,
                 "smtp_password_source": pw_cand.source,
+                "aws_secrets": aws_diag,
+                "error_class": "SMTPAuthenticationError",
             }
             continue
+
         except Exception as e:
             # Connection/TLS errors are unlikely to be fixed by trying a different password.
             last_err = str(e)
@@ -536,7 +619,10 @@ def _send_via_smtp(
                 "probe": probe,
                 "smtp_user": user,
                 "smtp_password_fp": pw_fp,
+                "smtp_password_tail": pw_cand.tail,
                 "smtp_password_source": pw_cand.source,
+                "aws_secrets": aws_diag,
+                "error_class": type(e).__name__,
             }
             break
 
@@ -544,26 +630,41 @@ def _send_via_smtp(
 
 
 # ---------------------------------------------------------------------
-# Public API
+# Public API used by accounts/views.py
 # ---------------------------------------------------------------------
 
 
 def send_email_via_sendgrid(
-    *,
     subject: str,
     to_emails: Iterable[str],
     plain_text_content: str,
     from_email: Optional[str] = None,
 ) -> bool:
     """
-    Unified email sending entrypoint used by the app.
+    Sends email using the configured backend mode, but with fallback:
+      - If mode is smtp => try SMTP first, then SendGrid Web API
+      - If mode is sendgrid => try SendGrid Web API first, then SMTP
+      - If mode is console => print and log as success
 
-    - Logs to accounts_emaillog for every attempted provider.
-    - Uses SendGrid Web API and/or SMTP based on EMAIL_BACKEND_MODE.
-    - Always falls back to the other provider if the first fails.
+    ALWAYS logs each attempt into accounts_emaillog (EmailLog model).
+    Never raises.
     """
-    recipients = [str(e).strip() for e in (to_emails or []) if str(e).strip()]
-    if not recipients:
+    subject = (subject or "").strip()
+    recipients = [str(e).strip() for e in (to_emails or []) if e and str(e).strip()]
+    recipients = list(dict.fromkeys(recipients))  # de-dupe, preserve order
+
+    if not subject or not recipients:
+        # Log minimal failure for traceability
+        for r in recipients or [""]:
+            _log_email_attempt(
+                to_email=r or "(missing)",
+                subject=subject or "(missing)",
+                provider="internal",
+                success=False,
+                status_code=None,
+                response_body="",
+                error="Missing subject and/or recipients",
+            )
         return False
 
     mode = _get_backend_mode()
@@ -592,21 +693,28 @@ def send_email_via_sendgrid(
     last_ok = False
 
     for provider in providers:
-        if provider == "sendgrid":
-            ok, status, resp_body, err = _send_via_sendgrid_api(
-                subject=subject,
-                to_emails=recipients,
-                plain_text=plain_text_content or "",
-                from_email=from_addr,
-            )
-        else:
-            ok, status, resp_body, err = _send_via_smtp(
-                subject=subject,
-                to_emails=recipients,
-                plain_text=plain_text_content or "",
-                from_email=from_addr,
-            )
+        try:
+            if provider == "sendgrid":
+                ok, status, resp_body, err = _send_via_sendgrid_api(
+                    subject=subject,
+                    to_emails=recipients,
+                    plain_text=plain_text_content or "",
+                    from_email=from_addr,
+                )
+            else:
+                ok, status, resp_body, err = _send_via_smtp(
+                    subject=subject,
+                    to_emails=recipients,
+                    plain_text=plain_text_content or "",
+                    from_email=from_addr,
+                )
+        except Exception as e:
+            ok = False
+            status = None
+            resp_body = ""
+            err = f"provider_crash:{provider}:{type(e).__name__}: {e}"
 
+        # Log for each recipient (helps trace specific addresses)
         for r in recipients:
             _log_email_attempt(
                 to_email=r,
