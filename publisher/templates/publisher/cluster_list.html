@@ -11,19 +11,24 @@
   <table border="1" cellpadding="8" cellspacing="0">
     <tr>
       <th>Code</th>
-      <th>English Name</th>
+      <th>Name</th>
       <th>Trigger</th>
       <th>Published</th>
+      <th>Active</th>
       <th>Action</th>
     </tr>
+
     {% for r in rows %}
       <tr>
-        <td>{{ r.obj.code }}</td>
-        <td>{{ r.name }}</td>
-        <td>{{ r.trigger }}</td>
-        <td>{{ r.obj.is_published }}</td>
-        <td><a href="{% url 'publisher:cluster_edit' r.obj.pk %}">Edit</a></td>
+        <td>{{ r.code }}</td>
+        <td>{{ r.display_name }}</td>
+        <td>{% if r.trigger %}{{ r.trigger.display_name }}{% else %}-{% endif %}</td>
+        <td>{{ r.is_published }}</td>
+        <td>{{ r.is_active }}</td>
+        <td><a href="{% url 'publisher:cluster_edit' r.pk %}">Edit</a></td>
       </tr>
+    {% empty %}
+      <tr><td colspan="6">No bundles found.</td></tr>
     {% endfor %}
   </table>
 {% endblock %}
