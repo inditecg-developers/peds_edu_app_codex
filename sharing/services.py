@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import json
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from django.conf import settings
 from django.core.cache import cache
 
 from catalog.constants import LANGUAGES
-
 from catalog.models import (
     TherapyArea,
     Trigger,
@@ -26,9 +24,6 @@ _CATALOG_CACHE_SECONDS = 60 * 60  # 1 hour
 
 
 def build_whatsapp_message_prefixes(doctor_name: str) -> Dict[str, str]:
-    """
-    WhatsApp message prefixes for each supported language.
-    """
     doctor = (doctor_name or "").strip() or "your doctor"
 
     templates = {
@@ -49,36 +44,6 @@ def build_whatsapp_message_prefixes(doctor_name: str) -> Dict[str, str]:
             "कृपया ते काळजीपूर्वक पहा आणि व्हिडिओमध्ये दिलेल्या सूचनांचे पालन करा, "
             "कारण हे तुमच्या डॉक्टरांच्या महत्त्वाच्या निरीक्षणांसाठी आहेत. "
             "तुमच्या मुलाचे आरोग्य आणि कल्याण व्हिडिओमधील सूचनांचे पालन करण्यावर अवलंबून आहे."
-        ),
-        "te": (
-            "మీ డాక్టర్ {doctor} మీకు క్రింది వీడియో/వీడియోలను పంపించారు. "
-            "దయచేసి వాటిని జాగ్రత్తగా చూడండి మరియు వీడియోలో ఇచ్చిన సూచనలను అనుసరించండి, "
-            "ఎందుకంటే ఇవి మీ డాక్టర్ యొక్క ముఖ్యమైన పరిశీలనల కోసం. "
-            "మీ పిల్లల ఆరోగ్యం మరియు శ్రేయస్సు వీడియోల్లో ఉన్న సూచనలను అనుసరించడంపై ఆధారపడి ఉంటుంది."
-        ),
-        "ta": (
-            "உங்கள் மருத்துவர் {doctor} உங்களுக்கு கீழ்க்கண்ட வீடியோ/வீடியோக்களை அனுப்பியுள்ளார். "
-            "தயவுசெய்து அவற்றை கவனமாகப் பார்த்து, வீடியோவில் கொடுக்கப்பட்ட வழிமுறைகளைப் பின்பற்றுங்கள், "
-            "ஏனெனில் இவை உங்கள் மருத்துவரின் முக்கியமான கண்காணிப்புகளுக்கானவை. "
-            "உங்கள் குழந்தையின் ஆரோக்கியமும் நலனும் இந்த வீடியோக்களில் உள்ள வழிமுறைகளைப் பின்பற்றுவதில் சார்ந்துள்ளது."
-        ),
-        "bn": (
-            "আপনার ডাক্তার {doctor} আপনাকে নিম্নলিখিত ভিডিও/ভিডিওগুলো পাঠিয়েছেন। "
-            "অনুগ্রহ করে সেগুলো মনোযোগ দিয়ে দেখুন এবং ভিডিওতে দেওয়া নির্দেশনা অনুসরণ করুন, "
-            "কারণ এগুলো আপনার ডাক্তারের গুরুত্বপূর্ণ পর্যবেক্ষণের জন্য। "
-            "আপনার সন্তানের স্বাস্থ্য ও কল্যাণ ভিডিওতে দেওয়া নির্দেশনা অনুসরণ করার উপর নির্ভর করে।"
-        ),
-        "ml": (
-            "നിങ്ങളുടെ ഡോക്ടർ {doctor} നിങ്ങള്‍ക്കായി താഴെ പറയുന്ന വീഡിയോ/വീഡിയോകള്‍ അയച്ചിട്ടുണ്ട്. "
-            "ദയവായി അവ ശ്രദ്ധാപൂർവ്വം കാണുകയും വീഡിയോയിലെ നിർദ്ദേശങ്ങൾ പാലിക്കുകയും ചെയ്യുക, "
-            "കാരണം ഇവ നിങ്ങളുടെ ഡോക്ടറുടെ പ്രധാനപ്പെട്ട നിരീക്ഷണങ്ങൾക്കായാണ്. "
-            "നിങ്ങളുടെ കുട്ടിയുടെ ആരോഗ്യവും ക്ഷേമവും വീഡിയോയിലെ നിർദ്ദേശങ്ങൾ പാലിക്കുന്നതിനെ ആശ്രയിച്ചിരിക്കുന്നു."
-        ),
-        "kn": (
-            "ನಿಮ್ಮ ವೈದ್ಯರು {doctor} ಅವರು ನಿಮಗೆ ಕೆಳಗಿನ ವೀಡಿಯೊ/ವೀಡಿಯೊಗಳನ್ನು ಕಳುಹಿಸಿದ್ದಾರೆ. "
-            "ದಯವಿಟ್ಟು ಅವನ್ನು ಗಮನದಿಂದ ನೋಡಿ ಹಾಗೂ ವೀಡಿಯೊಗಳಲ್ಲಿ ನೀಡಿರುವ ಸೂಚನೆಗಳನ್ನು ಅನುಸರಿಸಿ, "
-            "ಏಕೆಂದರೆ ಇವು ನಿಮ್ಮ ವೈದ್ಯರ ಮಹತ್ವದ ಗಮನಿಸಿಕೆಗಳಿಗಾಗಿ. "
-            "ನಿಮ್ಮ ಮಗುವಿನ ಆರೋಗ್ಯ ಮತ್ತು ಕಲ್ಯಾಣವು ವೀಡಿಯೊಗಳ ಸೂಚನೆಗಳನ್ನು ಪಾಲಿಸುವುದರ ಮೇಲೆ ಅವಲಂಬಿತವಾಗಿದೆ."
         ),
     }
 
@@ -189,26 +154,42 @@ def _build_catalog_payload() -> Dict[str, Any]:
     bundle_map: Dict[str, List[str]] = defaultdict(list)
 
     # -----------------------------------------------------------------
-    # Triggers for easy search + topic mapping + therapy mapping
+    # Video ↔ Trigger mapping (DO NOT use Trigger.video; it doesn't exist)
     # -----------------------------------------------------------------
-    # IMPORTANT: Trigger has FK "cluster" (TriggerCluster), not "trigger_cluster"
-    trig_rows = (
-        Trigger.objects.filter(is_active=True)
-        .select_related("cluster", "primary_therapy")
+    from catalog.models import VideoTriggerMap
+
+    vtm_rows = (
+        VideoTriggerMap.objects
+        .select_related(
+            "video",
+            "trigger",
+            "trigger__cluster",
+            "trigger__primary_therapy",
+        )
+        .all()
     )
 
-    for tr in trig_rows:
-        kw = getattr(tr, "keyword", "") or ""
-        if kw:
-            trigger_map[tr.video.code].append(kw.lower())
+    for vtm in vtm_rows:
+        video_code = vtm.video.code
+        tr = vtm.trigger
 
-        if tr.cluster_id:
-            topic_map[tr.video.code].append(tr.cluster.code)
+        for field in (
+            "display_name",
+            "doctor_trigger_label",
+            "subtopic_title",
+            "search_keywords",
+        ):
+            val = getattr(tr, field, "") or ""
+            if val:
+                trigger_map[video_code].append(val.lower())
+
+        if getattr(tr, "cluster_id", None):
+            topic_map[video_code].append(tr.cluster.code)
 
         if getattr(tr, "primary_therapy_id", None):
             ta = therapy_by_id.get(tr.primary_therapy_id)
             if ta:
-                therapy_map[tr.video.code].append(ta.code)
+                therapy_map[video_code].append(ta.code)
 
     # -----------------------------------------------------------------
     # Video bundles
@@ -266,9 +247,6 @@ def _build_catalog_payload() -> Dict[str, Any]:
 
 
 def get_catalog_json_cached(force_refresh: bool = False) -> Dict[str, Any]:
-    """
-    Returns the full catalog JSON used by the doctor share page (cached).
-    """
     cache_seconds = getattr(settings, "CATALOG_CACHE_SECONDS", _CATALOG_CACHE_SECONDS)
 
     if not force_refresh:
