@@ -7,6 +7,10 @@
   /* Local page styles (kept in-template to avoid affecting other pages) */
   .profile-row { display: flex; align-items: center; gap: 12px; }
   .profile-photo { width: 72px; height: 72px; border-radius: 18px; object-fit: cover; border: 1px solid #e6e6e6; background: #fff; }
+  .avatar { width: 72px; height: 72px; border-radius: 18px; border: 1px solid #e6e6e6; background: #111827; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; position: relative; overflow: hidden; }
+  .avatar-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+  .avatar-letter { line-height: 1; }
+
   .kv { margin: 6px 0; }
   .kv b { display: inline-block; min-width: 120px; }
 
@@ -101,9 +105,12 @@
   <h3 class="section-title">Doctor</h3>
 
   <div class="profile-row">
-    {% if doctor.photo %}
-      <img class="profile-photo" src="{{ doctor.photo.url }}" alt="Doctor photo" />
-    {% endif %}
+    <div class="avatar" aria-label="Doctor photo">
+      <div class="avatar-letter">{{ doctor.user.full_name|default:"D"|slice:":1"|upper }}</div>
+      {% if doctor.photo %}
+        <img class="avatar-img" src="{{ doctor.photo.url }}" alt="Doctor photo" loading="lazy" onerror="this.remove();" />
+      {% endif %}
+    </div>
     <div>
       <div style="font-size: 18px; font-weight: 800;">Dr. {{ doctor.user.full_name }}</div>
       <div class="muted">{{ doctor.clinic.display_name }}</div>
@@ -364,9 +371,15 @@ function updateButtons() {
   updateContextHint();
 }
 
-function buildMessage(link, lang) {
+function buildMessage(title, link, lang) {
   const prefix = (catalog.message_prefixes && catalog.message_prefixes[lang]) || "";
-  return (prefix || "") + link;
+  const p = (prefix || "").trim();
+  const t = (title || "").trim();
+  let msg = "";
+  if (p) msg += p + "\n\n";
+  if (t) msg += t + "\n";
+  msg += link;
+  return msg;
 }
 
 function shareToWhatsApp(message) {
@@ -389,16 +402,18 @@ function escapeHtml(str) {
 shareVideoBtn.onclick = () => {
   if (!activeVideo) return;
   const lang = langSel.value;
+  const title = (activeVideo.titles && (activeVideo.titles[lang] || activeVideo.titles["en"])) || activeVideo.id;
   const link = `${location.origin}/p/${catalog.doctor_id}/v/${activeVideo.id}/?lang=${lang}`;
-  shareToWhatsApp(buildMessage(link, lang));
+  shareToWhatsApp(buildMessage(title, link, lang));
 };
 
 shareBundleBtn.onclick = () => {
   const bundle = (bundleSel.value || "").trim();
   if (!bundle) return;
   const lang = langSel.value;
+  const title = bundleLabelByCode(bundle, lang) || bundle;
   const link = `${location.origin}/p/${catalog.doctor_id}/c/${bundle}/?lang=${lang}`;
-  shareToWhatsApp(buildMessage(link, lang));
+  shareToWhatsApp(buildMessage(title, link, lang));
 };
 
 // -------------------- event wiring --------------------
