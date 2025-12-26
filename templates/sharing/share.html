@@ -4,80 +4,156 @@
 
 {% block head %}
 <style>
-  /* Local page styles (kept in-template to avoid affecting other pages) */
-  .profile-row { display: flex; align-items: center; gap: 12px; }
-  .profile-photo { width: 72px; height: 72px; border-radius: 18px; object-fit: cover; border: 1px solid #e6e6e6; background: #fff; }
-  .avatar { width: 72px; height: 72px; border-radius: 18px; border: 1px solid #e6e6e6; background: #111827; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 30px; font-weight: 800; position: relative; overflow: hidden; }
-  .avatar-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+  /* Page-specific refinements for the doctor sharing screen.
+     Styling only: no IDs/classes/logic are changed. */
+
+  .profile-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .profile-photo {
+    width: 72px;
+    height: 72px;
+    border-radius: 18px;
+    object-fit: cover;
+    border: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .avatar {
+    width: 72px;
+    height: 72px;
+    border-radius: 18px;
+    border: 1px solid var(--border);
+    background: var(--primary);
+    color: var(--primary-contrast);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30px;
+    font-weight: 900;
+    position: relative;
+    overflow: hidden;
+    flex: 0 0 auto;
+  }
+
+  .avatar-img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
   .avatar-letter { line-height: 1; }
 
   .kv { margin: 6px 0; }
-  .kv b { display: inline-block; min-width: 120px; }
+  .kv b { display: inline-block; min-width: 120px; color: #334155; }
+
+  @media (max-width: 520px) {
+    .kv b { min-width: 96px; }
+  }
 
   /* Make 3-column filters on larger screens */
   @media (min-width: 760px) {
     .row.three { grid-template-columns: 1fr 1fr 1fr; }
   }
 
-  /* Form controls */
-  select, input[type="text"], input[type="tel"] {
+  /* Controls */
+  select,
+  input[type="text"],
+  input[type="tel"] {
     width: 100%;
-    padding: 10px 12px;
-    border: 1px solid #d1d5db;
-    border-radius: 10px;
-    background: #fff;
-    color: #111827;
+    padding: 11px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
     box-sizing: border-box;
   }
+
   select option {
-    color: #111827;
-    background: #fff;
+    color: var(--text);
+    background: var(--surface);
   }
 
-  /* Buttons */
-  .btn, button {
-    display: inline-block;
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-weight: 600;
+  /* Buttons (align with base styling, but keep existing selectors) */
+  .btn,
+  button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: var(--radius-sm);
+    padding: 10px 14px;
+    font-weight: 800;
     text-align: center;
     cursor: pointer;
     border: 1px solid transparent;
     text-decoration: none;
+    min-height: 40px;
+    line-height: 1;
+    transition: transform 80ms ease, background-color 140ms ease, border-color 140ms ease;
   }
+
   button {
-    background: #111827;
-    color: #fff;
+    background: var(--primary);
+    color: var(--primary-contrast);
   }
+
+  button:hover { background: var(--primary-hover); }
+  button:active { transform: translateY(1px); }
+
   button:disabled {
-    opacity: 0.5;
+    opacity: 0.55;
     cursor: not-allowed;
   }
-  .btn-secondary {
-    background: #fff;
-    color: #111827;
-    border-color: #d1d5db;
-  }
-  .btn-secondary:hover { border-color: #9ca3af; }
 
-  .hint { color: #6b7280; font-size: 13px; margin-top: 8px; }
+  .btn-secondary {
+    background: var(--surface);
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+
+  .btn-secondary:hover {
+    border-color: #94a3b8;
+    background: var(--surface-2);
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: 13px;
+    margin-top: 8px;
+  }
+
   .section-title { margin: 0 0 8px 0; }
 
   .video-list {
     margin-top: 12px;
-    border: 1px solid #e6e6e6;
-    border-radius: 12px;
-    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--surface);
     max-height: 360px;
     overflow: auto;
   }
+
   .video-item {
     padding: 10px 12px;
     border-bottom: 1px solid #f1f5f9;
     cursor: pointer;
+    transition: background-color 120ms ease;
   }
+
   .video-item:last-child { border-bottom: 0; }
-  .video-item.active { background: #eff6ff; }
+
+  .video-item:hover { background: #f8fafc; }
+
+  .video-item.active {
+    background: #eff6ff;
+  }
 
   .toolbar {
     margin-top: 12px;
@@ -86,17 +162,24 @@
     flex-wrap: wrap;
     align-items: flex-end;
   }
-  .toolbar .grow { flex: 1; min-width: 220px; }
 
-  .actions { display: flex; gap: 10px; flex-wrap: wrap; }
+  .toolbar .grow { flex: 1 1 260px; min-width: 240px; }
+
+  .actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
   .actions .btn { min-width: 140px; }
 
-  .prominent-footer {
-    margin-top: 14px;
+  @media (max-width: 520px) {
+    .actions .btn { min-width: 100%; }
   }
-  .prominent-footer .btn {
-    width: 100%;
-  }
+
+  .prominent-footer { margin-top: 14px; }
+  .prominent-footer .btn { width: 100%; }
 </style>
 {% endblock %}
 
