@@ -5,48 +5,48 @@
   <p class="muted" style="margin-bottom: 24px;">Manage all content for patient education system</p>
   
   <div class="row two" style="gap: 20px; margin-top: 20px; display: flex; align-items: stretch;">
-    <div class="card" style="border: 2px solid var(--border); transition: all 0.3s ease; flex: 1; display: flex; flex-direction: column;">
-      <h3 style="color: var(--primary); margin-bottom: 12px;">📚 Content Types</h3>
-      <ul style="list-style: none; padding: 0; margin: 0; flex: 1;">
-        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <a href="{% url 'publisher:therapy_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
-            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">📁</span>
+    <div class="card" style="border: 2px solid var(--border); transition: all 0.3s ease; flex: 1; display: flex; flex-direction: column; min-height: 200px;">
+      <h3 style="color: var(--primary); margin-bottom: 12px; flex-shrink: 0;">📚 Content Types</h3>
+      <ul style="list-style: none; padding: 0; margin: 0; flex: 1; display: flex; flex-direction: column;">
+        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border); flex: 1; display: flex; align-items: center;">
+          <a href="{% url 'publisher:therapy_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600; width: 100%;">
+            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; flex-shrink: 0;">📁</span>
             Therapy Areas
           </a>
         </li>
-        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <a href="{% url 'publisher:triggercluster_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
-            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">🏷️</span>
+        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border); flex: 1; display: flex; align-items: center;">
+          <a href="{% url 'publisher:triggercluster_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600; width: 100%;">
+            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; flex-shrink: 0;">🏷️</span>
             Trigger Clusters
           </a>
         </li>
-        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <a href="{% url 'publisher:trigger_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
-            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">🎯</span>
+        <li style="margin: 8px 0; padding: 8px 0; flex: 1; display: flex; align-items: center;">
+          <a href="{% url 'publisher:trigger_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600; width: 100%;">
+            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; flex-shrink: 0;">🎯</span>
             Triggers
           </a>
         </li>
       </ul>
     </div>
     
-    <div class="card" style="border: 2px solid var(--border); transition: all 0.3s ease; flex: 1; display: flex; flex-direction: column;">
-      <h3 style="color: var(--primary); margin-bottom: 12px;">🎬 Media & Organization</h3>
-      <ul style="list-style: none; padding: 0; margin: 0; flex: 1;">
-        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <a href="{% url 'publisher:video_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
-            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">📹</span>
+    <div class="card" style="border: 2px solid var(--border); transition: all 0.3s ease; flex: 1; display: flex; flex-direction: column; min-height: 200px;">
+      <h3 style="color: var(--primary); margin-bottom: 12px; flex-shrink: 0;">🎬 Media & Organization</h3>
+      <ul style="list-style: none; padding: 0; margin: 0; flex: 1; display: flex; flex-direction: column;">
+        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border); flex: 1; display: flex; align-items: center;">
+          <a href="{% url 'publisher:video_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600; width: 100%;">
+            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; flex-shrink: 0;">📹</span>
             Videos
           </a>
         </li>
-        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <a href="{% url 'publisher:cluster_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
-            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">📦</span>
+        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border); flex: 1; display: flex; align-items: center;">
+          <a href="{% url 'publisher:cluster_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600; width: 100%;">
+            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; flex-shrink: 0;">📦</span>
             Video Bundles
           </a>
         </li>
-        <li style="margin: 8px 0; padding: 8px 0; border-bottom: 1px solid var(--border);">
-          <a href="{% url 'publisher:map_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600;">
-            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;">🗺️</span>
+        <li style="margin: 8px 0; padding: 8px 0; flex: 1; display: flex; align-items: center;">
+          <a href="{% url 'publisher:map_list' %}" style="display: flex; align-items: center; gap: 8px; font-weight: 600; width: 100%;">
+            <span style="background: var(--surface-2); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; flex-shrink: 0;">🗺️</span>
             Video Trigger Maps
           </a>
         </li>
