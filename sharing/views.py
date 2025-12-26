@@ -18,12 +18,9 @@ from catalog.models import (
 from .services import build_whatsapp_message_prefixes, get_catalog_json_cached
 
 
-@login_required
 def home(request: HttpRequest) -> HttpResponse:
-    doctor = getattr(request.user, "doctor_profile", None)
-    if not doctor:
-        return redirect("accounts:logout")
-    return redirect("sharing:doctor_share", doctor_id=doctor.doctor_id)
+    # Keep a simple redirect to login
+    return redirect("accounts:login")
 
 
 @login_required
@@ -59,6 +56,7 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
         "sharing/share.html",
         {
             "doctor": doctor,
+            "clinic": getattr(doctor, "clinic", None),
             "catalog_json": catalog_json,
             "languages": LANGUAGES,
         },
@@ -92,6 +90,7 @@ def patient_video(request: HttpRequest, doctor_id: str, video_code: str) -> Http
             "vlang": vlang,
             "languages": LANGUAGES,
             "selected_lang": lang,
+            "show_auth_links": False,
         },
     )
 
@@ -117,10 +116,10 @@ def patient_cluster(
     # Cluster title in selected language (with English fallback)
     cl_lang = (
         VideoClusterLanguage.objects.filter(
-            cluster=cluster, language_code=lang
+            video_cluster=cluster, language_code=lang
         ).first()
         or VideoClusterLanguage.objects.filter(
-            cluster=cluster, language_code="en"
+            video_cluster=cluster, language_code="en"
         ).first()
     )
     cluster_title = cl_lang.name if cl_lang else cluster.code
@@ -136,6 +135,7 @@ def patient_cluster(
             VideoLanguage.objects.filter(video=v, language_code=lang).first()
             or VideoLanguage.objects.filter(video=v, language_code="en").first()
         )
+
         items.append(
             {
                 "video": v,
@@ -155,5 +155,6 @@ def patient_cluster(
             "items": items,
             "languages": LANGUAGES,
             "selected_lang": lang,
+            "show_auth_links": False,
         },
     )
