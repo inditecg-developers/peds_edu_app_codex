@@ -4,24 +4,40 @@
 
 {% block content %}
 <div class="card">
-  <div style="display: flex; align-items: center; gap: 12px;">
-    {% if doctor.photo %}
-      <img src="{{ doctor.photo.url }}" alt="Doctor photo"
-           style="width: 64px; height: 64px; border-radius: 16px; object-fit: cover; border: 1px solid #e6e6e6;" />
-    {% endif %}
-    <div>
-      <div><strong>Dr. {{ doctor.user.full_name }}</strong></div>
+  <div style="display: flex; align-items: flex-start; gap: 12px;">
+    <div style="width: 64px; height: 64px; border-radius: 16px; border: 1px solid #e6e6e6; background: #111827; color: #fff; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 800; position: relative; overflow: hidden;">
+      <div style="line-height: 1;">{{ doctor.user.full_name|default:"D"|slice:":1"|upper }}</div>
+      {% if doctor.photo %}
+        <img src="{{ doctor.photo.url }}"
+             alt="Doctor photo"
+             loading="lazy"
+             onerror="this.remove();"
+             style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover;" />
+      {% endif %}
+    </div>
+
+    <div style="flex: 1;">
+      <div style="font-weight: 900;">Dr. {{ doctor.user.full_name }}</div>
       <div class="muted">{{ clinic.display_name }}</div>
       <div class="muted">{{ clinic.state }}{% if clinic.postal_code %} — {{ clinic.postal_code }}{% endif %}</div>
+
+      <div class="muted" style="margin-top: 8px;">
+        {{ clinic.address_text|linebreaksbr }}
+      </div>
+
+      <div class="muted" style="margin-top: 6px;">
+        Clinic phone: {{ clinic.clinic_phone }}
+        {% if clinic.clinic_whatsapp_number %} · WhatsApp: {{ clinic.clinic_whatsapp_number }}{% endif %}
+      </div>
     </div>
   </div>
 
   <div style="margin-top: 14px;">
-    <div style="font-size: 18px; font-weight: 800;">{{ cluster_title }}</div>
+    <div style="font-size: 18px; font-weight: 900;">{{ cluster_title }}</div>
     <div class="muted">Patient education bundle</div>
   </div>
 
-  <div style="margin-top:12px;" class="row two">
+  <div style="margin-top: 12px;" class="row two">
     <div>
       <label for="lang">Language</label>
       <select id="lang">
@@ -41,14 +57,16 @@
           <div style="position: relative; padding-bottom: 56.25%; height: 0; overflow: hidden; border-radius: 12px; border: 1px solid #e6e6e6;">
             <iframe class="yt-player"
                     data-youtube-url="{{ it.url }}"
+                    referrerpolicy="strict-origin-when-cross-origin"
+                    loading="lazy"
                     style="position: absolute; top:0; left:0; width:100%; height:100%; border:0;"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                     allowfullscreen></iframe>
 
             <div class="yt-fallback"
                  style="display:none; align-items:center; justify-content:space-between; gap:10px; padding:12px; background:#f8fafc; height:100%;">
               <div class="muted">Unable to embed this video.</div>
-              <a href="{{ it.url }}" target="_blank" style="font-weight:700;">Open on YouTube</a>
+              <a href="{{ it.url }}" target="_blank" rel="noopener noreferrer" style="font-weight:700;">Open on YouTube</a>
             </div>
           </div>
         {% else %}
@@ -57,7 +75,7 @@
           </div>
         {% endif %}
 
-        <div style="margin-top:8px; font-weight:800;">
+        <div style="margin-top:8px; font-weight:900;">
           {{ it.title }}
         </div>
       </div>
@@ -65,39 +83,51 @@
   {% else %}
     <p style="margin-top: 14px;">No videos in this bundle.</p>
   {% endif %}
-
-  <div style="margin-top: 14px;" class="muted">
-    {{ clinic.address_text|linebreaksbr }}
-  </div>
 </div>
 
 <script>
-document.querySelectorAll(".yt-player").forEach(function (iframe) {
-  const rawUrl = iframe.dataset.youtubeUrl || "";
-  const fallback = iframe.nextElementSibling;
-
-  const match = rawUrl.match(
-    /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)([A-Za-z0-9_-]{11})/
-  );
-
-  if (!match) {
-    iframe.style.display = "none";
-    if (fallback) fallback.style.display = "flex";
-    return;
+(function () {
+  function toEmbedSrc(videoId) {
+    const params = new URLSearchParams({
+      rel: "0",
+      modestbranding: "1",
+      iv_load_policy: "3",
+      playsinline: "1",
+      disablekb: "1",
+      controls: "1",
+      fs: "1",
+      origin: window.location.origin
+    });
+    return "https://www.youtube-nocookie.com/embed/" + videoId + "?" + params.toString();
   }
 
-  iframe.src = "https://www.youtube.com/embed/" + match[1];
+  document.querySelectorAll(".yt-player").forEach(function (iframe) {
+    const rawUrl = iframe.dataset.youtubeUrl || "";
+    const fallback = iframe.nextElementSibling;
 
-  iframe.addEventListener("error", () => {
-    iframe.style.display = "none";
-    if (fallback) fallback.style.display = "flex";
+    const match = rawUrl.match(
+      /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtube-nocookie\.com\/embed\/|youtu\.be\/)([A-Za-z0-9_-]{11})/
+    );
+
+    if (!match) {
+      iframe.style.display = "none";
+      if (fallback) fallback.style.display = "flex";
+      return;
+    }
+
+    iframe.src = toEmbedSrc(match[1]);
+
+    iframe.addEventListener("error", () => {
+      iframe.style.display = "none";
+      if (fallback) fallback.style.display = "flex";
+    });
   });
-});
 
-document.getElementById("lang").addEventListener("change", function () {
-  const url = new URL(window.location.href);
-  url.searchParams.set("lang", this.value);
-  window.location.href = url.toString();
-});
+  document.getElementById("lang").addEventListener("change", function () {
+    const url = new URL(window.location.href);
+    url.searchParams.set("lang", this.value);
+    window.location.href = url.toString();
+  });
+})();
 </script>
 {% endblock %}
