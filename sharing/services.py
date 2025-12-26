@@ -1,4 +1,3 @@
-# sharing/services.py
 from __future__ import annotations
 
 import json
@@ -29,10 +28,6 @@ _CATALOG_CACHE_SECONDS = 60 * 60  # 1 hour
 def build_whatsapp_message_prefixes(doctor_name: str) -> Dict[str, str]:
     """
     WhatsApp message prefixes for each supported language.
-    The final message is constructed in the front-end as:
-
-        <prefix> + "\n" + <video_or_bundle_title> + "\n" + <portal_link>
-
     """
     doctor = (doctor_name or "").strip() or "your doctor"
 
@@ -87,7 +82,6 @@ def build_whatsapp_message_prefixes(doctor_name: str) -> Dict[str, str]:
         ),
     }
 
-    # Ensure we return a value for every supported language code in catalog.constants.LANGUAGES
     out: Dict[str, str] = {}
     for code, _label in LANGUAGES:
         tmpl = templates.get(code, templates["en"])
@@ -115,8 +109,9 @@ def _build_catalog_payload() -> Dict[str, Any]:
     # -----------------------------------------------------------------
     # Topics (TriggerClusters)
     # -----------------------------------------------------------------
-    topic_qs = TriggerCluster.objects.filter(is_active=True).order_by("sort_order", "id")
-    topics = list(topic_qs)
+    topics = list(
+        TriggerCluster.objects.filter(is_active=True).order_by("sort_order", "id")
+    )
     topics_payload = [
         {
             "code": tc.code,
@@ -126,7 +121,6 @@ def _build_catalog_payload() -> Dict[str, Any]:
         }
         for tc in topics
     ]
-    topic_by_id = {tc.id: tc for tc in topics}
 
     # -----------------------------------------------------------------
     # Bundles (VideoClusters)
@@ -142,7 +136,6 @@ def _build_catalog_payload() -> Dict[str, Any]:
     bundle_topics_by_code: Dict[str, List[str]] = defaultdict(list)
     bundle_therapy_by_code: Dict[str, List[str]] = defaultdict(list)
 
-    # Bundle translated names
     bundle_lang_rows = VideoClusterLanguage.objects.filter(
         video_cluster__in=bundles
     ).select_related("video_cluster")
@@ -152,42 +145,35 @@ def _build_catalog_payload() -> Dict[str, Any]:
 
     for b in bundles:
         bundle_display_names_by_code[b.code] = b.display_name or b.code
-        # Map trigger/topic and therapy areas if present
         if b.trigger_id:
-            # Topic / TriggerCluster codes
-            try:
-                bundle_topics_by_code[b.code].append(b.trigger.code)
-            except Exception:
-                pass
+            bundle_topics_by_code[b.code].append(b.trigger.code)
 
-            # Therapy areas through trigger -> triggers mapping
-            try:
-                trig = Trigger.objects.filter(trigger_cluster_id=b.trigger_id).first()
-                if trig and trig.therapy_area_id:
-                    ta = therapy_by_id.get(trig.therapy_area_id)
-                    if ta:
-                        bundle_therapy_by_code[b.code].append(ta.code)
-            except Exception:
-                pass
+            trig = (
+                Trigger.objects.filter(cluster_id=b.trigger_id)
+                .select_related("cluster", "primary_therapy")
+                .first()
+            )
+            if trig and trig.primary_therapy_id:
+                ta = therapy_by_id.get(trig.primary_therapy_id)
+                if ta:
+                    bundle_therapy_by_code[b.code].append(ta.code)
 
-    bundles_payload = []
-    for b in bundles:
-        bundles_payload.append(
-            {
-                "code": b.code,
-                "display_name": bundle_display_names_by_code.get(b.code, b.code),
-                "names": bundle_names_by_code.get(b.code, {}),
-                "topic_codes": bundle_topics_by_code.get(b.code, []),
-                "therapy_codes": bundle_therapy_by_code.get(b.code, []),
-            }
-        )
+    bundles_payload = [
+        {
+            "code": b.code,
+            "display_name": bundle_display_names_by_code.get(b.code, b.code),
+            "names": bundle_names_by_code.get(b.code, {}),
+            "topic_codes": bundle_topics_by_code.get(b.code, []),
+            "therapy_codes": bundle_therapy_by_code.get(b.code, []),
+        }
+        for b in bundles
+    ]
 
     # -----------------------------------------------------------------
     # Videos (+ localized titles + search text)
     # -----------------------------------------------------------------
     videos = list(Video.objects.filter(is_active=True).order_by("sort_order", "id"))
 
-    # Preload language rows
     vlang_rows = VideoLanguage.objects.filter(video__in=videos).select_related("video")
 
     titles_by_video_code: Dict[str, Dict[str, str]] = defaultdict(dict)
@@ -197,50 +183,62 @@ def _build_catalog_payload() -> Dict[str, Any]:
         titles_by_video_code[row.video.code][row.language_code] = row.title
         url_by_video_code[row.video.code][row.language_code] = row.youtube_url
 
-    # Relations:
-    # - triggers (keywords)
-    # - trigger clusters (topics)
-    # - video clusters (bundles)
     trigger_map: Dict[str, List[str]] = defaultdict(list)
     topic_map: Dict[str, List[str]] = defaultdict(list)
     therapy_map: Dict[str, List[str]] = defaultdict(list)
     bundle_map: Dict[str, List[str]] = defaultdict(list)
 
-    # Triggers for easy search (keywords)
-    trig_rows = Trigger.objects.filter(is_active=True).select_related("trigger_cluster")
-    for tr in trig_rows:
-        trigger_map[tr.video.code].append(tr.keyword.lower())
-        if tr.trigger_cluster_id:
-            topic_map[tr.video.code].append(tr.trigger_cluster.code)
-            # Therapy via trigger cluster mapping
-            if tr.therapy_area_id:
-                ta = therapy_by_id.get(tr.therapy_area_id)
-                if ta:
-                    therapy_map[tr.video.code].append(ta.code)
-
-    # Video bundles
-    vc_rows = VideoClusterVideo.objects.filter(video_cluster__in=bundles).select_related(
-        "video_cluster", "video"
+    # -----------------------------------------------------------------
+    # Triggers for easy search + topic mapping + therapy mapping
+    # -----------------------------------------------------------------
+    # IMPORTANT: Trigger has FK "cluster" (TriggerCluster), not "trigger_cluster"
+    trig_rows = (
+        Trigger.objects.filter(is_active=True)
+        .select_related("cluster", "primary_therapy")
     )
+
+    for tr in trig_rows:
+        kw = getattr(tr, "keyword", "") or ""
+        if kw:
+            trigger_map[tr.video.code].append(kw.lower())
+
+        if tr.cluster_id:
+            topic_map[tr.video.code].append(tr.cluster.code)
+
+        if getattr(tr, "primary_therapy_id", None):
+            ta = therapy_by_id.get(tr.primary_therapy_id)
+            if ta:
+                therapy_map[tr.video.code].append(ta.code)
+
+    # -----------------------------------------------------------------
+    # Video bundles
+    # -----------------------------------------------------------------
+    vc_rows = VideoClusterVideo.objects.filter(
+        video_cluster__in=bundles
+    ).select_related("video_cluster", "video")
+
     for row in vc_rows:
         bundle_map[row.video.code].append(row.video_cluster.code)
 
+    # -----------------------------------------------------------------
     # Build videos payload
+    # -----------------------------------------------------------------
     videos_payload = []
     for v in videos:
         code = v.code
         titles = titles_by_video_code.get(code, {})
-        # Add fallback title if no translation exists
         if "en" not in titles:
             titles["en"] = v.display_name or code
 
         search_parts = []
         search_parts.extend([t.lower() for t in titles.values() if t])
         search_parts.extend(trigger_map.get(code, []))
-        # also include bundle names for matching bundle search
+
         for bcode in bundle_map.get(code, []):
             search_parts.append(bcode.lower())
-            search_parts.append((bundle_display_names_by_code.get(bcode, "") or "").lower())
+            search_parts.append(
+                (bundle_display_names_by_code.get(bcode, "") or "").lower()
+            )
             for lang_name in bundle_names_by_code.get(bcode, {}).values():
                 if lang_name:
                     search_parts.append(lang_name.lower())
@@ -254,20 +252,17 @@ def _build_catalog_payload() -> Dict[str, Any]:
                 "topic_codes": topic_map.get(code, []),
                 "therapy_codes": therapy_map.get(code, []),
                 "bundle_codes": bundle_map.get(code, []),
-                "search_text": " ".join(sorted(set([p for p in search_parts if p]))),
+                "search_text": " ".join(sorted(set(p for p in search_parts if p))),
             }
         )
 
-    payload = {
+    return {
         "therapy_areas": therapy_payload,
         "topics": topics_payload,
         "bundles": bundles_payload,
         "videos": videos_payload,
-        # Default prefixes: overridden in view with doctor name
         "message_prefixes": build_whatsapp_message_prefixes("your doctor"),
     }
-
-    return payload
 
 
 def get_catalog_json_cached(force_refresh: bool = False) -> Dict[str, Any]:
