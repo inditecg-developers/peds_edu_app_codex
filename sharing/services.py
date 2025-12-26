@@ -16,14 +16,18 @@ from catalog.models import (
     VideoCluster,
     VideoClusterLanguage,
     VideoClusterVideo,
+    VideoTriggerMap,
 )
-
 
 _CATALOG_CACHE_KEY = "clinic_catalog_payload_v6"
 _CATALOG_CACHE_SECONDS = 60 * 60  # 1 hour
 
 
 def build_whatsapp_message_prefixes(doctor_name: str) -> Dict[str, str]:
+    """
+    Prefix only. The final WhatsApp message is built in the front-end as:
+      <prefix>\n\n<title>\n<link>
+    """
     doctor = (doctor_name or "").strip() or "your doctor"
 
     templates = {
@@ -45,6 +49,36 @@ def build_whatsapp_message_prefixes(doctor_name: str) -> Dict[str, str]:
             "कारण हे तुमच्या डॉक्टरांच्या महत्त्वाच्या निरीक्षणांसाठी आहेत. "
             "तुमच्या मुलाचे आरोग्य आणि कल्याण व्हिडिओमधील सूचनांचे पालन करण्यावर अवलंबून आहे."
         ),
+        "te": (
+            "మీ డాక్టర్ {doctor} మీకు క్రింది వీడియో/వీడియోలను పంపించారు. "
+            "దయచేసి వాటిని జాగ్రత్తగా చూడండి మరియు వీడియోలో ఇచ్చిన సూచనలను అనుసరించండి, "
+            "ఎందుకంటే ఇవి మీ డాక్టర్ యొక్క ముఖ్యమైన పరిశీలనల కోసం. "
+            "మీ పిల్లల ఆరోగ్యం మరియు శ్రేయస్సు వీడియోల్లో ఉన్న సూచనలను అనుసరించడంపై ఆధారపడి ఉంటుంది."
+        ),
+        "ta": (
+            "உங்கள் மருத்துவர் {doctor} உங்களுக்கு கீழ்க்கண்ட வீடியோ/வீடியோக்களை அனுப்பியுள்ளார். "
+            "தயவுசெய்து அவற்றை கவனமாகப் பார்த்து, வீடியோவில் கொடுக்கப்பட்ட வழிமுறைகளைப் பின்பற்றுங்கள், "
+            "ஏனெனில் இவை உங்கள் மருத்துவரின் முக்கியமான கண்காணிப்புகளுக்கானவை. "
+            "உங்கள் குழந்தையின் ஆரோக்கியமும் நலனும் இந்த வீடியோக்களில் உள்ள வழிமுறைகளைப் பின்பற்றுவதில் சார்ந்துள்ளது."
+        ),
+        "bn": (
+            "আপনার ডাক্তার {doctor} আপনাকে নিম্নলিখিত ভিডিও/ভিডিওগুলো পাঠিয়েছেন। "
+            "অনুগ্রহ করে সেগুলো মনোযোগ দিয়ে দেখুন এবং ভিডিওতে দেওয়া নির্দেশনা অনুসরণ করুন, "
+            "কারণ এগুলো আপনার ডাক্তারের গুরুত্বপূর্ণ পর্যবেক্ষণের জন্য। "
+            "আপনার সন্তানের স্বাস্থ্য ও কল্যাণ ভিডিওতে দেওয়া নির্দেশনা অনুসরণ করার উপর নির্ভর করে।"
+        ),
+        "ml": (
+            "നിങ്ങളുടെ ഡോക്ടർ {doctor} നിങ്ങള്‍ക്കായി താഴെ പറയുന്ന വീഡിയോ/വീഡിയോകള്‍ അയച്ചിട്ടുണ്ട്. "
+            "ദയവായി അവ ശ്രദ്ധാപൂർവ്വം കാണുകയും വീഡിയോയിലെ നിർദ്ദേശങ്ങൾ പാലിക്കുകയും ചെയ്യുക, "
+            "കാരണം ഇവ നിങ്ങളുടെ ഡോക്ടറുടെ പ്രധാനപ്പെട്ട നിരീക്ഷണങ്ങൾക്കായാണ്. "
+            "നിങ്ങളുടെ കുട്ടിയുടെ ആരോഗ്യവും ക്ഷേമവും വീഡിയോയിലെ നിർദ്ദേശങ്ങൾ പാലിക്കുന്നതിനെ ആശ്രയിച്ചിരിക്കുന്നു."
+        ),
+        "kn": (
+            "ನಿಮ್ಮ ವೈದ್ಯರು {doctor} ಅವರು ನಿಮಗೆ ಕೆಳಗಿನ ವೀಡಿಯೊ/ವೀಡಿಯೊಗಳನ್ನು ಕಳುಹಿಸಿದ್ದಾರೆ. "
+            "ದಯವಿಟ್ಟು ಅವನ್ನು ಗಮನದಿಂದ ನೋಡಿ ಹಾಗೂ ವೀಡಿಯೊಗಳಲ್ಲಿ ನೀಡಿರುವ ಸೂಚನೆಗಳನ್ನು ಅನುಸರಿಸಿ, "
+            "ಏಕೆಂದರೆ ಇವು ನಿಮ್ಮ ವೈದ್ಯರ ಮಹತ್ವದ ಗಮನಿಸಿಕೆಗಳಿಗಾಗಿ. "
+            "ನಿಮ್ಮ ಮಗುವಿನ ಆರೋಗ್ಯ ಮತ್ತು ಕಲ್ಯಾಣವು ವೀಡಿಯೊಗಳ ಸೂಚನೆಗಳನ್ನು ಪಾಲಿಸುವುದರ ಮೇಲೆ ಅವಲಂಬಿತವಾಗಿದೆ."
+        ),
     }
 
     out: Dict[str, str] = {}
@@ -58,25 +92,14 @@ def _build_catalog_payload() -> Dict[str, Any]:
     # -----------------------------------------------------------------
     # Therapy Areas
     # -----------------------------------------------------------------
-    therapy_areas = list(
-        TherapyArea.objects.filter(is_active=True).order_by("sort_order", "id")
-    )
-    therapy_payload = [
-        {
-            "code": ta.code,
-            "display_name": ta.display_name,
-            "description": ta.description,
-        }
-        for ta in therapy_areas
-    ]
+    therapy_areas = list(TherapyArea.objects.filter(is_active=True).order_by("sort_order", "id"))
+    therapy_payload = [{"code": ta.code, "display_name": ta.display_name, "description": ta.description} for ta in therapy_areas]
     therapy_by_id = {ta.id: ta for ta in therapy_areas}
 
     # -----------------------------------------------------------------
     # Topics (TriggerClusters)
     # -----------------------------------------------------------------
-    topics = list(
-        TriggerCluster.objects.filter(is_active=True).order_by("sort_order", "id")
-    )
+    topics = list(TriggerCluster.objects.filter(is_active=True).order_by("sort_order", "id"))
     topics_payload = [
         {
             "code": tc.code,
@@ -98,30 +121,41 @@ def _build_catalog_payload() -> Dict[str, Any]:
 
     bundle_names_by_code: Dict[str, Dict[str, str]] = defaultdict(dict)
     bundle_display_names_by_code: Dict[str, str] = {}
-    bundle_topics_by_code: Dict[str, List[str]] = defaultdict(list)
-    bundle_therapy_by_code: Dict[str, List[str]] = defaultdict(list)
 
-    bundle_lang_rows = VideoClusterLanguage.objects.filter(
-        video_cluster__in=bundles
-    ).select_related("video_cluster")
-
+    bundle_lang_rows = VideoClusterLanguage.objects.filter(video_cluster__in=bundles).select_related("video_cluster")
     for row in bundle_lang_rows:
         bundle_names_by_code[row.video_cluster.code][row.language_code] = row.name
 
+    # Derive bundle display names safely
     for b in bundles:
-        bundle_display_names_by_code[b.code] = b.display_name or b.code
-        if b.trigger_id:
-            bundle_topics_by_code[b.code].append(b.trigger.code)
+        bundle_display_names_by_code[b.code] = (b.display_name or "").strip() or b.code
 
-            trig = (
-                Trigger.objects.filter(cluster_id=b.trigger_id)
-                .select_related("cluster", "primary_therapy")
-                .first()
-            )
-            if trig and trig.primary_therapy_id:
-                ta = therapy_by_id.get(trig.primary_therapy_id)
-                if ta:
-                    bundle_therapy_by_code[b.code].append(ta.code)
+    # Bundle topic + therapy codes
+    bundle_topics_by_code: Dict[str, List[str]] = defaultdict(list)
+    bundle_therapy_by_code: Dict[str, List[str]] = defaultdict(list)
+
+    # IMPORTANT: VideoCluster.trigger is FK to Trigger (not TriggerCluster)
+    for b in bundles:
+        if not getattr(b, "trigger_id", None):
+            continue
+
+        trig = (
+            Trigger.objects.filter(id=b.trigger_id)
+            .select_related("cluster", "primary_therapy")
+            .first()
+        )
+        if not trig:
+            continue
+
+        # Topic = Trigger.cluster
+        if getattr(trig, "cluster_id", None) and trig.cluster:
+            bundle_topics_by_code[b.code].append(trig.cluster.code)
+
+        # Therapy = Trigger.primary_therapy
+        if getattr(trig, "primary_therapy_id", None):
+            ta = therapy_by_id.get(trig.primary_therapy_id)
+            if ta:
+                bundle_therapy_by_code[b.code].append(ta.code)
 
     bundles_payload = [
         {
@@ -148,24 +182,18 @@ def _build_catalog_payload() -> Dict[str, Any]:
         titles_by_video_code[row.video.code][row.language_code] = row.title
         url_by_video_code[row.video.code][row.language_code] = row.youtube_url
 
+    # Maps per video_code
     trigger_map: Dict[str, List[str]] = defaultdict(list)
     topic_map: Dict[str, List[str]] = defaultdict(list)
     therapy_map: Dict[str, List[str]] = defaultdict(list)
     bundle_map: Dict[str, List[str]] = defaultdict(list)
 
     # -----------------------------------------------------------------
-    # Video ↔ Trigger mapping (DO NOT use Trigger.video; it doesn't exist)
+    # Video ↔ Trigger mapping via VideoTriggerMap
     # -----------------------------------------------------------------
-    from catalog.models import VideoTriggerMap
-
     vtm_rows = (
         VideoTriggerMap.objects
-        .select_related(
-            "video",
-            "trigger",
-            "trigger__cluster",
-            "trigger__primary_therapy",
-        )
+        .select_related("video", "trigger", "trigger__cluster", "trigger__primary_therapy")
         .all()
     )
 
@@ -173,19 +201,17 @@ def _build_catalog_payload() -> Dict[str, Any]:
         video_code = vtm.video.code
         tr = vtm.trigger
 
-        for field in (
-            "display_name",
-            "doctor_trigger_label",
-            "subtopic_title",
-            "search_keywords",
-        ):
+        # Searchable trigger fields (safe)
+        for field in ("display_name", "doctor_trigger_label", "subtopic_title", "search_keywords"):
             val = getattr(tr, field, "") or ""
             if val:
                 trigger_map[video_code].append(val.lower())
 
-        if getattr(tr, "cluster_id", None):
+        # Topic codes
+        if getattr(tr, "cluster_id", None) and tr.cluster:
             topic_map[video_code].append(tr.cluster.code)
 
+        # Therapy codes
         if getattr(tr, "primary_therapy_id", None):
             ta = therapy_by_id.get(tr.primary_therapy_id)
             if ta:
@@ -194,10 +220,7 @@ def _build_catalog_payload() -> Dict[str, Any]:
     # -----------------------------------------------------------------
     # Video bundles
     # -----------------------------------------------------------------
-    vc_rows = VideoClusterVideo.objects.filter(
-        video_cluster__in=bundles
-    ).select_related("video_cluster", "video")
-
+    vc_rows = VideoClusterVideo.objects.filter(video_cluster__in=bundles).select_related("video_cluster", "video")
     for row in vc_rows:
         bundle_map[row.video.code].append(row.video_cluster.code)
 
@@ -207,19 +230,22 @@ def _build_catalog_payload() -> Dict[str, Any]:
     videos_payload = []
     for v in videos:
         code = v.code
-        titles = titles_by_video_code.get(code, {})
-        if "en" not in titles:
-            titles["en"] = v.display_name or code
 
-        search_parts = []
+        titles = dict(titles_by_video_code.get(code, {}))
+        # Fallback English title MUST NOT rely on v.display_name (it doesn't exist)
+        if "en" not in titles:
+            titles["en"] = code
+
+        # A UI display label for lists can be the English title (or code)
+        display_label = titles.get("en") or code
+
+        search_parts: List[str] = []
         search_parts.extend([t.lower() for t in titles.values() if t])
         search_parts.extend(trigger_map.get(code, []))
 
         for bcode in bundle_map.get(code, []):
             search_parts.append(bcode.lower())
-            search_parts.append(
-                (bundle_display_names_by_code.get(bcode, "") or "").lower()
-            )
+            search_parts.append((bundle_display_names_by_code.get(bcode, "") or "").lower())
             for lang_name in bundle_names_by_code.get(bcode, {}).values():
                 if lang_name:
                     search_parts.append(lang_name.lower())
@@ -227,7 +253,7 @@ def _build_catalog_payload() -> Dict[str, Any]:
         videos_payload.append(
             {
                 "id": code,
-                "display_name": v.display_name or code,
+                "display_name": display_label,
                 "titles": titles,
                 "urls": url_by_video_code.get(code, {}),
                 "topic_codes": topic_map.get(code, []),
