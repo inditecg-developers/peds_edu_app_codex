@@ -1,33 +1,83 @@
 {% extends "base.html" %}
-{% block title %}Videos{% endblock %}
-{% block header_title %}Videos{% endblock %}
+{% block title %}{{ cluster_title }}{% endblock %}
+{% block header_title %}{{ cluster_title }}{% endblock %}
 
 {% block content %}
 <div class="card">
-  <h2>{{ cluster.display_name|default:cluster.code }}</h2>
-
-  <div style="margin: 10px 0;">
+  <div style="margin-bottom:12px;">
     <label>Language</label>
-    <select onchange="location.href='?lang=' + this.value;">
+    <select id="lang">
       {% for code, name in languages %}
-        <option value="{{ code }}" {% if code == selected_lang %}selected{% endif %}>{{ name }}</option>
+        <option value="{{ code }}" {% if code == selected_lang %}selected{% endif %}>
+          {{ name }}
+        </option>
       {% endfor %}
     </select>
   </div>
 
   {% if items %}
-    <ul>
-      {% for it in items %}
-        <li style="margin:10px 0;">
-          <div><strong>{{ it.title }}</strong></div>
-          {% if it.url %}
-            <div><a href="{{ it.url }}" target="_blank">Open video</a></div>
-          {% endif %}
-        </li>
-      {% endfor %}
-    </ul>
+    {% for it in items %}
+      <div style="margin-bottom:24px;">
+        {% if it.url %}
+          <div style="position: relative; padding-top: 56.25%;">
+            <iframe
+              class="yt-player"
+              data-youtube-url="{{ it.url }}"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowfullscreen
+              referrerpolicy="strict-origin-when-cross-origin"
+              style="position:absolute; top:0; left:0; width:100%; height:100%; border:0; border-radius:12px;">
+            </iframe>
+
+            <div class="yt-fallback"
+                 style="display:none; position:absolute; inset:0;
+                        background:#111; color:#fff;
+                        align-items:center; justify-content:center;
+                        text-align:center; border-radius:12px;">
+              <a href="{{ it.url }}" target="_blank" style="color:#4ea3ff;">
+                Open on YouTube
+              </a>
+            </div>
+          </div>
+        {% endif %}
+
+        <div style="margin-top:8px; font-weight:700;">
+          {{ it.title }}
+        </div>
+      </div>
+    {% endfor %}
   {% else %}
     <p>No videos in this bundle.</p>
   {% endif %}
 </div>
+
+<script>
+document.querySelectorAll(".yt-player").forEach(function (iframe) {
+  const rawUrl = iframe.dataset.youtubeUrl || "";
+  const fallback = iframe.nextElementSibling;
+
+  const match = rawUrl.match(
+    /(?:youtube\.com\/watch\?v=|youtube\.com\/embed\/|youtu\.be\/)([A-Za-z0-9_-]{11})/
+  );
+
+  if (!match) {
+    iframe.style.display = "none";
+    if (fallback) fallback.style.display = "flex";
+    return;
+  }
+
+  iframe.src = "https://www.youtube.com/embed/" + match[1];
+
+  iframe.addEventListener("error", () => {
+    iframe.style.display = "none";
+    if (fallback) fallback.style.display = "flex";
+  });
+});
+
+document.getElementById('lang').addEventListener('change', function () {
+  const url = new URL(window.location.href);
+  url.searchParams.set('lang', this.value);
+  window.location.href = url.toString();
+});
+</script>
 {% endblock %}
