@@ -3,7 +3,7 @@
 {% block content %}
   <h2>
     {% if is_new %}
-      New Bundle
+      Add Bundle
     {% else %}
       Edit Bundle: {{ cluster.code }}
     {% endif %}
@@ -14,7 +14,40 @@
 
     <fieldset style="margin-bottom: 18px;">
       <legend>Bundle Details</legend>
-      {{ form.as_p }}
+
+      {% if form.non_field_errors %}
+        <div style="color:#b00020; margin:8px 0;">{{ form.non_field_errors }}</div>
+      {% endif %}
+
+      <div style="margin:10px 0;">
+        <label>Code:</label><br>
+        {{ form.code }} {{ form.code.errors }}
+      </div>
+
+      <div style="margin:10px 0;">
+        <label>Display name:</label><br>
+        {{ form.display_name }} {{ form.display_name.errors }}
+      </div>
+
+      <div style="margin:10px 0;">
+        <label>Description:</label><br>
+        {{ form.description }} {{ form.description.errors }}
+      </div>
+
+      <div style="margin:10px 0;">
+        <label>Trigger:</label><br>
+        {{ form.trigger }} {{ form.trigger.errors }}
+      </div>
+
+      <div style="margin:10px 0;">
+        <label>Is published:</label>
+        {{ form.is_published }} {{ form.is_published.errors }}
+      </div>
+
+      <div style="margin:10px 0;">
+        <label>Is active:</label>
+        {{ form.is_active }} {{ form.is_active.errors }}
+      </div>
     </fieldset>
 
     <fieldset style="margin-bottom: 18px;">
@@ -22,55 +55,38 @@
 
       {{ lang_fs.management_form }}
 
-      <table border="1" cellpadding="8" cellspacing="0" style="width: 100%;">
-        <tr>
-          <th>Language</th>
-          <th>Name</th>
-          <th>Delete?</th>
-        </tr>
-
-        {% for f in lang_fs.forms %}
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
           <tr>
-            <td>
-              {# REQUIRED: hidden inline form fields (id, etc.) #}
-              {% for h in f.hidden_fields %}
-                {{ h }}
-              {% endfor %}
-
-              {{ f.language_code }}
-
-              {% if f.language_code.errors %}
-                <div style="color: #b00020; font-size: 12px;">
-                  {{ f.language_code.errors }}
-                </div>
-              {% endif %}
-            </td>
-
-            <td>
-              {{ f.name }}
-
-              {% if f.name.errors %}
-                <div style="color: #b00020; font-size: 12px;">
-                  {{ f.name.errors }}
-                </div>
-              {% endif %}
-            </td>
-
-            <td>
-              {{ f.DELETE }}
-            </td>
+            <th style="text-align:left; padding:8px; border:1px solid #e5e7eb;">Language</th>
+            <th style="text-align:left; padding:8px; border:1px solid #e5e7eb;">Name</th>
+            <th style="text-align:left; padding:8px; border:1px solid #e5e7eb;">Delete?</th>
           </tr>
-
-          {% if f.non_field_errors %}
+        </thead>
+        <tbody>
+          {% for f in lang_fs.forms %}
             <tr>
-              <td colspan="3">
-                <div style="color: #b00020; font-size: 12px;">
-                  {{ f.non_field_errors }}
-                </div>
+              <td style="padding:8px; border:1px solid #e5e7eb;">
+                {{ f.language_code }}
+                {{ f.language_code.errors }}
+              </td>
+              <td style="padding:8px; border:1px solid #e5e7eb;">
+                {{ f.name }}
+                {{ f.name.errors }}
+              </td>
+              <td style="padding:8px; border:1px solid #e5e7eb;">
+                {% if f.DELETE %}{{ f.DELETE }}{% endif %}
               </td>
             </tr>
-          {% endif %}
-        {% endfor %}
+            {% if f.non_field_errors %}
+              <tr>
+                <td colspan="3" style="padding:8px; border:1px solid #e5e7eb; color:#b00020;">
+                  {{ f.non_field_errors }}
+                </td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
       </table>
     </fieldset>
 
@@ -79,103 +95,109 @@
 
       {{ vid_fs.management_form }}
 
-      <table border="1" cellpadding="8" cellspacing="0" style="width: 100%;">
-        <tr>
-          <th>Video</th>
-          <th>Sort Order</th>
-          <th>Delete?</th>
-        </tr>
-
-        {% for f in vid_fs.forms %}
+      <table style="width:100%; border-collapse:collapse;">
+        <thead>
           <tr>
-            <td>
-              {# REQUIRED: hidden inline form fields (id, etc.) #}
-              {% for h in f.hidden_fields %}
-                {{ h }}
-              {% endfor %}
-
-              <input type="text" class="video-filter" data-target-id="{{ f.video.id_for_label }}" placeholder="Type to filter videos…" style="width: 100%; margin-bottom: 6px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px;">
-              {{ f.video }}
-
-              {% if f.video.errors %}
-                <div style="color: #b00020; font-size: 12px;">
-                  {{ f.video.errors }}
-                </div>
-              {% endif %}
-            </td>
-
-            <td>
-              {{ f.sort_order }}
-
-              {% if f.sort_order.errors %}
-                <div style="color: #b00020; font-size: 12px;">
-                  {{ f.sort_order.errors }}
-                </div>
-              {% endif %}
-            </td>
-
-            <td>
-              {{ f.DELETE }}
-            </td>
+            <th style="text-align:left; padding:8px; border:1px solid #e5e7eb;">Video</th>
+            <th style="text-align:left; padding:8px; border:1px solid #e5e7eb;">Sort order</th>
+            <th style="text-align:left; padding:8px; border:1px solid #e5e7eb;">Delete?</th>
           </tr>
-
-          {% if f.non_field_errors %}
+        </thead>
+        <tbody>
+          {% for f in vid_fs.forms %}
             <tr>
-              <td colspan="3">
-                <div style="color: #b00020; font-size: 12px;">
-                  {{ f.non_field_errors }}
-                </div>
+              <td style="padding:8px; border:1px solid #e5e7eb;">
+                <input type="text"
+                       class="video-filter"
+                       data-target="{{ f.video.id_for_label }}"
+                       placeholder="Type to filter videos..."
+                       style="width:100%; margin-bottom:8px; padding:8px; border:1px solid #d1d5db; border-radius:8px;">
+                {{ f.video }}
+                {{ f.video.errors }}
+              </td>
+              <td style="padding:8px; border:1px solid #e5e7eb;">
+                {{ f.sort_order }}
+                {{ f.sort_order.errors }}
+              </td>
+              <td style="padding:8px; border:1px solid #e5e7eb;">
+                {% if f.DELETE %}{{ f.DELETE }}{% endif %}
               </td>
             </tr>
-          {% endif %}
-        {% endfor %}
+            {% if f.non_field_errors %}
+              <tr>
+                <td colspan="3" style="padding:8px; border:1px solid #e5e7eb; color:#b00020;">
+                  {{ f.non_field_errors }}
+                </td>
+              </tr>
+            {% endif %}
+          {% endfor %}
+        </tbody>
       </table>
+
+      <div style="margin-top:10px; color:#6b7280; font-size:13px;">
+        Tip: Start typing above a dropdown to filter its video options.
+      </div>
     </fieldset>
 
     <button type="submit">Save</button>
-    <a href="{% url 'publisher:cluster_list' %}" style="margin-left: 12px;">
-      Back
-    </a>
+    <a href="{% url 'publisher:cluster_list' %}" style="margin-left: 12px;">Back</a>
   </form>
-<script>
-(function () {
-  function setupFilter(input) {
-    const targetId = input.getAttribute("data-target-id");
-    if (!targetId) return;
 
-    const select = document.getElementById(targetId);
-    if (!select) return;
+  <script>
+  (function() {
+    // Build an option cache per select
+    const selectCache = new Map();
 
-    // Capture original options once.
-    const originalOptions = Array.from(select.options).map(o => ({
-      value: o.value,
-      text: o.text,
-    }));
-
-    function applyFilter() {
-      const q = (input.value || "").toLowerCase().trim();
-      const currentVal = select.value;
-
-      // Rebuild options to avoid browser-specific quirks with option.hidden.
-      select.innerHTML = "";
-      originalOptions.forEach(o => {
-        const match = !q || (o.text || "").toLowerCase().includes(q) || o.value === currentVal;
-        if (!match) return;
-
-        const opt = document.createElement("option");
-        opt.value = o.value;
-        opt.text = o.text;
-        if (o.value === currentVal) opt.selected = true;
-        select.appendChild(opt);
-      });
+    function cacheSelect(selectEl) {
+      if (!selectEl || selectCache.has(selectEl)) return;
+      const opts = Array.from(selectEl.options).map(o => ({ value: o.value, text: o.text }));
+      selectCache.set(selectEl, opts);
     }
 
-    input.addEventListener("input", applyFilter);
-  }
+    function applyFilter(selectEl, query) {
+      cacheSelect(selectEl);
+      const all = selectCache.get(selectEl) || [];
+      const q = (query || "").toLowerCase().trim();
 
-  document.querySelectorAll(".video-filter").forEach(setupFilter);
-})();
-</script>
+      const current = selectEl.value;
 
+      const filtered = q
+        ? all.filter(o => (o.text || "").toLowerCase().includes(q))
+        : all;
+
+      // Rebuild options
+      selectEl.innerHTML = "";
+      filtered.forEach(o => {
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.textContent = o.text;
+        selectEl.appendChild(opt);
+      });
+
+      // Restore selection if still present
+      if (filtered.some(o => o.value === current)) {
+        selectEl.value = current;
+      } else {
+        // If current is not present, keep first option selected
+        selectEl.selectedIndex = 0;
+      }
+    }
+
+    // Hook all video selects
+    document.querySelectorAll("select.video-select").forEach(cacheSelect);
+
+    // Connect filter inputs
+    document.querySelectorAll("input.video-filter").forEach(inp => {
+      const targetId = inp.getAttribute("data-target");
+      const selectEl = targetId ? document.getElementById(targetId) : null;
+      if (!selectEl) return;
+
+      cacheSelect(selectEl);
+
+      inp.addEventListener("input", () => {
+        applyFilter(selectEl, inp.value);
+      });
+    });
+  })();
+  </script>
 {% endblock %}
-
