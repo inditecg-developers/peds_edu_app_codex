@@ -1,29 +1,61 @@
 {% extends "base.html" %}
+{% block title %}Bundle Trigger Maps{% endblock %}
+{% block header_title %}Publisher{% endblock %}
+
 {% block content %}
-  <h2>Video Trigger Maps</h2>
+<div class="card">
+  <h2>Bundle Trigger Maps</h2>
+  <p style="color:#6b7280; margin-top: 6px;">
+    This page maps <strong>Triggers</strong> to <strong>Bundles (Video Clusters)</strong>.
+    Filtering on the doctor share page uses these mappings.
+  </p>
 
-  <form method="get" style="margin-bottom:12px;">
-    <input name="q" value="{{ q }}" placeholder="Search trigger/video code" />
-    <button type="submit">Search</button>
-    <a href="{% url 'publisher:map_create' %}" style="margin-left:12px;">+ New Map</a>
-  </form>
+  <div style="margin-top: 14px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+    <form method="get" style="display:flex; gap: 8px; align-items:center;">
+      <input name="q" value="{{ q|default:'' }}" placeholder="Search bundle or trigger…" style="padding: 10px; border: 1px solid #e5e7eb; border-radius: 8px; min-width: 260px;">
+      <button class="btn btn-secondary" type="submit">Search</button>
+      {% if q %}
+        <a class="btn btn-secondary" href="{% url 'publisher:map_list' %}">Clear</a>
+      {% endif %}
+    </form>
 
-  <table border="1" cellpadding="8" cellspacing="0">
+    <a class="btn" href="{% url 'publisher:map_create' %}" style="margin-left: auto;">+ New Mapping</a>
+  </div>
+
+  <table class="table" style="margin-top: 14px;">
     <tr>
+      <th>Bundle Code</th>
+      <th>Bundle Name</th>
+      <th>Therapy Area</th>
       <th>Trigger</th>
-      <th>Video</th>
-      <th>Primary?</th>
-      <th>Sort</th>
-      <th>Action</th>
+      <th style="width: 220px;">Actions</th>
     </tr>
-    {% for m in rows %}
+
+    {% for b in items %}
       <tr>
-        <td>{{ m.trigger.code }}</td>
-        <td>{{ m.video.code }}</td>
-        <td>{{ m.is_primary }}</td>
-        <td>{{ m.sort_order }}</td>
-        <td><a href="{% url 'publisher:map_edit' m.pk %}">Edit</a></td>
+        <td>{{ b.code }}</td>
+        <td>{{ b.display_name }}</td>
+        <td>
+          {% if b.trigger.primary_therapy %}
+            {{ b.trigger.primary_therapy.display_name }}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>{{ b.trigger.display_name }} ({{ b.trigger.code }})</td>
+        <td>
+          <a href="{% url 'publisher:map_edit' b.id %}">Edit Mapping</a>
+          &nbsp;|&nbsp;
+          <a href="{% url 'publisher:cluster_edit' b.id %}">Edit Bundle</a>
+        </td>
       </tr>
+    {% empty %}
+      <tr><td colspan="5" style="color:#6b7280;">No bundles found.</td></tr>
     {% endfor %}
   </table>
+
+  <div style="margin-top: 14px;">
+    <a class="btn btn-secondary" href="{% url 'publisher:dashboard' %}">Back</a>
+  </div>
+</div>
 {% endblock %}

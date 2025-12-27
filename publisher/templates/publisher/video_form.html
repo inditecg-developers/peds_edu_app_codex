@@ -1,46 +1,53 @@
 {% extends "base.html" %}
-{% block title %}{{ page_title }}{% endblock %}
-{% block header_title %}{{ page_title }}{% endblock %}
+{% block title %}{% if object %}Edit Video{% else %}Add Video{% endif %}{% endblock %}
+{% block header_title %}Patient Education{% endblock %}
 
 {% block content %}
 <div class="card">
-  <h2>{{ page_title }}</h2>
+  <h2>{% if object %}Edit Video{% else %}Add Video{% endif %}</h2>
+
+  <p style="margin-top: 6px; color: #6b7280;">
+    Note: A video cannot exist standalone. It must be part of at least one bundle/cluster.
+    If the required bundle does not exist yet, create it first and then return here.
+    <a href="{% url 'publisher:cluster_create' %}" style="margin-left: 8px;">+ Create Bundle</a>
+    <a href="{% url 'publisher:cluster_list' %}" style="margin-left: 8px;">View Bundles</a>
+  </p>
+
+  {% if object %}
+    <div class="card" style="margin: 14px 0; background: #f9fafb;">
+      <strong>Bundles this video is part of:</strong>
+      <div style="margin-top: 8px;">
+        {% if object.clusters.all %}
+          <ul style="margin: 0; padding-left: 18px;">
+            {% for b in object.clusters.all %}
+              <li>{{ b.code }} — {{ b.display_name }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <span style="color: #6b7280;">None</span>
+        {% endif %}
+      </div>
+    </div>
+  {% endif %}
 
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
 
-    {% if formset.non_form_errors %}
-      <div class="message error">{{ formset.non_form_errors|striptags }}</div>
-    {% endif %}
-
     <h3>Language Details (all languages required)</h3>
-
-    {{ formset.management_form }}
-    <table>
-      <tr>
-        <th>Language Code</th>
-        <th>Title</th>
-        <th>YouTube URL</th>
-      </tr>
-
+    <table class="table">
+      <tr><th>Language Code</th><th>Title</th><th>YouTube URL</th></tr>
       {% for f in formset.forms %}
-        <tr>
-          <td>{{ f.language_code }}</td>
-          <td>
-            {{ f.title }}
-            {% if f.title.errors %}<div class="message error">{{ f.title.errors|striptags }}</div>{% endif %}
-          </td>
-          <td>
-            {{ f.youtube_url }}
-            {% if f.youtube_url.errors %}<div class="message error">{{ f.youtube_url.errors|striptags }}</div>{% endif %}
-          </td>
-        </tr>
+      <tr>
+        <td>{{ f.language_code }}</td>
+        <td>{{ f.title }}</td>
+        <td>{{ f.youtube_url }}</td>
+      </tr>
       {% endfor %}
     </table>
 
-    <button type="submit">Save</button>
-    <a href="{% url 'publisher:video_list' %}">Cancel</a>
+    <button class="btn" type="submit">Save</button>
+    <a class="btn btn-secondary" href="{% url 'publisher:video_list' %}">Back</a>
   </form>
 </div>
 {% endblock %}

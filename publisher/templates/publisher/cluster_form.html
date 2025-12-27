@@ -94,6 +94,7 @@
                 {{ h }}
               {% endfor %}
 
+              <input type="text" class="video-filter" data-target-id="{{ f.video.id_for_label }}" placeholder="Type to filter videos…" style="width: 100%; margin-bottom: 6px; padding: 8px; border: 1px solid #e5e7eb; border-radius: 8px;">
               {{ f.video }}
 
               {% if f.video.errors %}
@@ -136,4 +137,45 @@
       Back
     </a>
   </form>
+<script>
+(function () {
+  function setupFilter(input) {
+    const targetId = input.getAttribute("data-target-id");
+    if (!targetId) return;
+
+    const select = document.getElementById(targetId);
+    if (!select) return;
+
+    // Capture original options once.
+    const originalOptions = Array.from(select.options).map(o => ({
+      value: o.value,
+      text: o.text,
+    }));
+
+    function applyFilter() {
+      const q = (input.value || "").toLowerCase().trim();
+      const currentVal = select.value;
+
+      // Rebuild options to avoid browser-specific quirks with option.hidden.
+      select.innerHTML = "";
+      originalOptions.forEach(o => {
+        const match = !q || (o.text || "").toLowerCase().includes(q) || o.value === currentVal;
+        if (!match) return;
+
+        const opt = document.createElement("option");
+        opt.value = o.value;
+        opt.text = o.text;
+        if (o.value === currentVal) opt.selected = true;
+        select.appendChild(opt);
+      });
+    }
+
+    input.addEventListener("input", applyFilter);
+  }
+
+  document.querySelectorAll(".video-filter").forEach(setupFilter);
+})();
+</script>
+
 {% endblock %}
+
