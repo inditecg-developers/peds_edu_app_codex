@@ -82,7 +82,6 @@ def trigger_cluster_list(request):
     rows = TriggerCluster.objects.all().order_by("display_name", "code")
     if q:
         rows = rows.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
-    # NOTE: template for list is publisher/trigger_cluster_list.html which extends triggercluster_list.html
     return render(request, "publisher/trigger_cluster_list.html", {"rows": rows, "q": q})
 
 
@@ -119,11 +118,7 @@ def trigger_cluster_edit(request, pk):
 @staff_member_required
 def trigger_list(request):
     q = (request.GET.get("q") or "").strip()
-    rows = (
-        Trigger.objects.select_related("cluster", "primary_therapy")
-        .all()
-        .order_by("display_name", "code")
-    )
+    rows = Trigger.objects.select_related("cluster", "primary_therapy").all().order_by("display_name", "code")
     if q:
         rows = rows.filter(Q(code__icontains=q) | Q(display_name__icontains=q))
     return render(request, "publisher/trigger_list.html", {"rows": rows, "q": q})
@@ -180,7 +175,6 @@ def video_create(request):
             with transaction.atomic():
                 video = form.save()
 
-                # Enforce cluster membership
                 clusters = list(form.cleaned_data.get("clusters") or [])
                 for cluster in clusters:
                     VideoClusterVideo.objects.get_or_create(
@@ -199,18 +193,13 @@ def video_create(request):
         initial = [{"language_code": code} for code in ("en", "hi", "mr", "te", "ta", "bn", "ml", "kn")]
         formset = FormSet(initial=initial)
 
-    return render(
-        request,
-        "publisher/video_form.html",
-        {"form": form, "formset": formset, "object": None},
-    )
+    return render(request, "publisher/video_form.html", {"form": form, "formset": formset, "object": None})
 
 
 @staff_member_required
 def video_edit(request, pk):
     video = get_object_or_404(Video, pk=pk)
 
-    # Ensure 8 language rows exist (legacy data compatibility)
     for code in ("en", "hi", "mr", "te", "ta", "bn", "ml", "kn"):
         video.languages.get_or_create(language_code=code, defaults={"title": "", "youtube_url": ""})
 
@@ -247,11 +236,7 @@ def video_edit(request, pk):
         form = VideoForm(instance=video)
         formset = FormSet(instance=video)
 
-    return render(
-        request,
-        "publisher/video_form.html",
-        {"form": form, "formset": formset, "object": video},
-    )
+    return render(request, "publisher/video_form.html", {"form": form, "formset": formset, "object": video})
 
 
 # ---------------------------
@@ -268,33 +253,46 @@ def cluster_list(request):
 
 @staff_member_required
 def cluster_create(request):
-    LangFormSet = make_cluster_language_formset(extra=3)
-    VideoFormSet = make_cluster_video_formset(extra=5)
+    # IMPORTANT: template expects lang_fs / vid_fs and cluster / is_new
+    LangFS = make_cluster_language_formset(extra=8)
+    VidFS = make_cluster_video_formset(extra=8)
+
+    cluster = VideoCluster()
 
     if request.method == "POST":
         form = VideoClusterForm(request.POST)
-        lang_formset = LangFormSet(request.POST)
-        video_formset = VideoFormSet(request.POST)
+        lang_fs = LangFS(request.POST, instance=cluster)
+        vid_fs = VidFS(request.POST, instance=cluster)
 
-        if form.is_valid() and lang_formset.is_valid() and video_formset.is_valid():
+        if form.is_valid() and lang_fs.is_valid() and vid_fs.is_valid():
             with transaction.atomic():
                 cluster = form.save()
-                lang_formset.instance = cluster
-                video_formset.instance = cluster
-                lang_formset.save()
-                video_formset.save()
+                lang_fs.instance = cluster
+                vid_fs.instance = cluster
+                lang_fs.save()
+                vid_fs.save()
 
             messages.success(request, "Bundle created.")
             return redirect("publisher:cluster_list")
     else:
         form = VideoClusterForm()
-        lang_formset = LangFormSet()
-        video_formset = VideoFormSet()
+        lang_fs = LangFS(instance=cluster)
+        vid_fs = VidFS(instance=cluster)
 
     return render(
         request,
         "publisher/cluster_form.html",
-        {"form": form, "lang_formset": lang_formset, "video_formset": video_formset, "object": None},
+        {
+            "form": form,
+            "cluster": cluster,
+            "is_new": True,
+            "lang_fs": lang_fs,
+            "vid_fs": vid_fs,
+            # Back-compat if any template still reads these
+            "lang_formset": lang_fs,
+            "video_formset": vid_fs,
+            "object": None,
+        },
     )
 
 
@@ -302,31 +300,40 @@ def cluster_create(request):
 def cluster_edit(request, pk):
     cluster = get_object_or_404(VideoCluster, pk=pk)
 
-    LangFormSet = make_cluster_language_formset(extra=0)
-    VideoFormSet = make_cluster_video_formset(extra=0)
+    LangFS = make_cluster_language_formset(extra=5)
+    VidFS = make_cluster_video_formset(extra=8)
 
     if request.method == "POST":
         form = VideoClusterForm(request.POST, instance=cluster)
-        lang_formset = LangFormSet(request.POST, instance=cluster)
-        video_formset = VideoFormSet(request.POST, instance=cluster)
+        lang_fs = LangFS(request.POST, instance=cluster)
+        vid_fs = VidFS(request.POST, instance=cluster)
 
-        if form.is_valid() and lang_formset.is_valid() and video_formset.is_valid():
+        if form.is_valid() and lang_fs.is_valid() and vid_fs.is_valid():
             with transaction.atomic():
                 form.save()
-                lang_formset.save()
-                video_formset.save()
+                lang_fs.save()
+                vid_fs.save()
 
             messages.success(request, "Bundle updated.")
             return redirect("publisher:cluster_list")
     else:
         form = VideoClusterForm(instance=cluster)
-        lang_formset = LangFormSet(instance=cluster)
-        video_formset = VideoFormSet(instance=cluster)
+        lang_fs = LangFS(instance=cluster)
+        vid_fs = VidFS(instance=cluster)
 
     return render(
         request,
         "publisher/cluster_form.html",
-        {"form": form, "lang_formset": lang_formset, "video_formset": video_formset, "object": cluster},
+        {
+            "form": form,
+            "cluster": cluster,
+            "is_new": False,
+            "lang_fs": lang_fs,
+            "vid_fs": vid_fs,
+            "lang_formset": lang_fs,
+            "video_formset": vid_fs,
+            "object": cluster,
+        },
     )
 
 
@@ -346,8 +353,6 @@ def map_list(request):
             | Q(trigger__display_name__icontains=q)
         )
 
-    # NOTE: your map_list template may expect "items" (bundle-mapping UI) or "rows" (legacy UI).
-    # The bundle-mapping templates we used expect "items".
     return render(request, "publisher/map_list.html", {"items": bundles, "q": q})
 
 
