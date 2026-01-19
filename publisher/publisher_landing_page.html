@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}Publisher Landing{% endblock %}
+{% block header_title %}Campaign Publishing{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Publisher Landing Page</h2>
+
+  <p class="muted">
+    Authenticated publisher:
+    <strong>{{ publisher.username }}</strong>
+    {% if publisher.sub %} ({{ publisher.sub }}){% endif %}
+  </p>
+
+  {% if campaign_id %}
+    <p><strong>Campaign ID:</strong> {{ campaign_id }}</p>
+  {% else %}
+    <p class="muted">
+      No campaign-id was provided in the link. You can still edit existing campaigns.
+    </p>
+  {% endif %}
+
+  <div class="row two" style="margin-top: 16px;">
+    <div>
+      {% if campaign_id %}
+        <a class="btn" href="{% url 'campaign_publisher:add_campaign_details' %}?campaign-id={{ campaign_id|urlencode }}">
+          Add details for this campaign
+        </a>
+      {% else %}
+        <button class="btn" disabled>Add details for this campaign</button>
+      {% endif %}
+    </div>
+
+    <div>
+      <a class="btn btn-secondary" href="{% url 'campaign_publisher:campaign_list' %}">
+        Edit details for any other campaign
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}
