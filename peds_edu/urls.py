@@ -22,3 +22,4 @@ urlpatterns = [
 
 # Serve uploaded media (doctor photos + campaign banners)
 urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
