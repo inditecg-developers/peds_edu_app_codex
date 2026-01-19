@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Campaign{% endblock %}
+{% block header_title %}Edit Campaign{% endblock %}
+
+{% block content %}
+<div class="card">
+  <h2>Edit Campaign</h2>
+  <p><strong>Campaign ID:</strong> {{ campaign.campaign_id }}</p>
+
+  <div class="muted" style="margin-bottom: 10px;">
+    Existing banners:
+    {% if campaign.banner_small %}<div>Small: <a href="{{ campaign.banner_small.url }}" target="_blank">{{ campaign.banner_small.name }}</a></div>{% endif %}
+    {% if campaign.banner_large %}<div>Large: <a href="{{ campaign.banner_large.url }}" target="_blank">{{ campaign.banner_large.name }}</a></div>{% endif %}
+  </div>
+
+  <form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+
+    {% if form.non_field_errors %}
+      <div class="message error">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    {{ form.campaign_id }}
+
+    <div style="margin-top: 12px;">
+      <label for="{{ form.new_video_cluster_name.id_for_label }}">{{ form.new_video_cluster_name.label }}</label>
+      {{ form.new_video_cluster_name }}
+      {% if form.new_video_cluster_name.errors %}
+        <div class="message error">{{ form.new_video_cluster_name.errors }}</div>
+      {% endif %}
+    </div>
+
+    <hr>
+    <h3>Selection</h3>
+
+    <div style="margin-top: 10px;">
+      <label for="searchInput">Search videos or clusters</label>
+      <input id="searchInput" type="text" placeholder="Type keywords or video/cluster name..." autocomplete="off" />
+    </div>
+
+    <div id="searchResults" style="margin-top: 10px;"></div>
+
+    <div style="margin-top: 16px;">
+      <h4>Selected items</h4>
+      <div id="selectedItems" class="muted">No selections yet.</div>
+    </div>
+
+    {{ form.selected_items_json }}
+
+    <div style="margin-top: 16px;">
+      <h4>Selected videos (expanded)</h4>
+      <div id="expandedVideos" class="muted">Loading...</div>
+      {% if form.selected_items_json.errors %}
+        <div class="message error">{{ form.selected_items_json.errors }}</div>
+      {% endif %}
+    </div>
+
+    <hr>
+
+    <div class="row two">
+      <div>
+        <label for="{{ form.doctors_supported.id_for_label }}">{{ form.doctors_supported.label }}</label>
+        {{ form.doctors_supported }}
+        {% if form.doctors_supported.errors %}
+          <div class="message error">{{ form.doctors_supported.errors }}</div>
+        {% endif %}
+      </div>
+
+      <div>
+        <label for="{{ form.banner_target_url.id_for_label }}">{{ form.banner_target_url.label }}</label>
+        {{ form.banner_target_url }}
+        {% if form.banner_target_url.errors %}
+          <div class="message error">{{ form.banner_target_url.errors }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="row two" style="margin-top: 14px;">
+      <div>
+        <label for="{{ form.banner_small.id_for_label }}">{{ form.banner_small.label }}</label>
+        {{ form.banner_small }}
+      </div>
+
+      <div>
+        <label for="{{ form.banner_large.id_for_label }}">{{ form.banner_large.label }}</label>
+        {{ form.banner_large }}
+      </div>
+    </div>
+
+    <div class="row two" style="margin-top: 14px;">
+      <div>
+        <label for="{{ form.start_date.id_for_label }}">{{ form.start_date.label }}</label>
+        {{ form.start_date }}
+        {% if form.start_date.errors %}
+          <div class="message error">{{ form.start_date.errors }}</div>
+        {% endif %}
+      </div>
+
+      <div>
+        <label for="{{ form.end_date.id_for_label }}">{{ form.end_date.label }}</label>
+        {{ form.end_date }}
+        {% if form.end_date.errors %}
+          <div class="message error">{{ form.end_date.errors }}</div>
+        {% endif %}
+      </div>
+    </div>
+
+    <div style="margin-top: 18px;">
+      <button type="submit">Save</button>
+      <a class="btn btn-secondary" style="margin-left: 10px;"
+         href="{% url 'campaign_publisher:campaign_list' %}">
+        Back
+      </a>
+    </div>
+  </form>
+</div>
+
+<script>
+/* Identical JS to add_campaign_details.html, reused inline for simplicity */
+(function() {
+  const searchUrl = "{% url 'campaign_publisher:api_search_catalog' %}";
+  const expandUrl = "{% url 'campaign_publisher:api_expand_selection' %}";
+
+  const searchInput = document.getElementById("searchInput");
+  const resultsDiv = document.getElementById("searchResults");
+  const selectedDiv = document.getElementById("selectedItems");
+  const expandedDiv = document.getElementById("expandedVideos");
+
+  const hidden = document.getElementById("id_selected_items_json");
+
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== "") {
+      const cookies = document.cookie.split(";");
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + "=")) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+  const csrftoken = getCookie("csrftoken");
+
+  let selectedItems = [];
+  try {
+    selectedItems = JSON.parse(hidden.value || "[]");
+    if (!Array.isArray(selectedItems)) selectedItems = [];
+  } catch(e) {
+    selectedItems = [];
+  }
+
+  function syncHidden() { hidden.value = JSON.stringify(selectedItems); }
+
+  function renderSelectedItems() {
+    if (!selectedItems.length) {
+      selectedDiv.innerHTML = '<span class="muted">No selections yet.</span>';
+      return;
+    }
+    const ul = document.createElement("ul");
+    selectedItems.forEach((it, idx) => {
+      const li = document.createElement("li");
+      li.textContent = `${it.type} #${it.id} `;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Remove";
+      btn.style.marginLeft = "10px";
+      btn.onclick = () => {
+        selectedItems.splice(idx, 1);
+        syncHidden();
+        renderSelectedItems();
+        refreshExpandedVideos();
+      };
+      li.appendChild(btn);
+      ul.appendChild(li);
+    });
+    selectedDiv.innerHTML = "";
+    selectedDiv.appendChild(ul);
+  }
+
+  async function refreshExpandedVideos() {
+    if (!selectedItems.length) {
+      expandedDiv.innerHTML = '<span class="muted">No videos selected yet.</span>';
+      return;
+    }
+
+    expandedDiv.innerHTML = '<span class="muted">Loading...</span>';
+
+    const resp = await fetch(expandUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-CSRFToken": csrftoken
+      },
+      body: JSON.stringify({items: selectedItems})
+    });
+
+    if (!resp.ok) {
+      expandedDiv.innerHTML = '<span class="muted">Unable to expand selection.</span>';
+      return;
+    }
+
+    const data = await resp.json();
+    const vids = (data && data.videos) ? data.videos : [];
+
+    if (!vids.length) {
+      expandedDiv.innerHTML = '<span class="muted">No videos found for selection.</span>';
+      return;
+    }
+
+    const ul = document.createElement("ul");
+    vids.forEach(v => {
+      const li = document.createElement("li");
+      li.textContent = `${v.code}, ${v.title}`;
+      ul.appendChild(li);
+    });
+    expandedDiv.innerHTML = "";
+    expandedDiv.appendChild(ul);
+  }
+
+  function addItem(type, id) {
+    const exists = selectedItems.some(x => x.type === type && String(x.id) === String(id));
+    if (exists) return;
+    selectedItems.push({type: type, id: id});
+    syncHidden();
+    renderSelectedItems();
+    refreshExpandedVideos();
+  }
+
+  let debounceTimer = null;
+  searchInput.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(async () => {
+      const q = (searchInput.value || "").trim();
+      if (q.length < 2) { resultsDiv.innerHTML = ""; return; }
+
+      const resp = await fetch(searchUrl + "?q=" + encodeURIComponent(q));
+      if (!resp.ok) { resultsDiv.innerHTML = '<div class="muted">Search failed.</div>'; return; }
+
+      const data = await resp.json();
+      const results = (data && data.results) ? data.results : [];
+
+      if (!results.length) { resultsDiv.innerHTML = '<div class="muted">No matches.</div>'; return; }
+
+      const wrap = document.createElement("div");
+      results.forEach(r => {
+        const row = document.createElement("div");
+        row.style.display = "flex";
+        row.style.alignItems = "center";
+        row.style.justifyContent = "space-between";
+        row.style.gap = "12px";
+        row.style.padding = "10px 12px";
+        row.style.border = "1px solid rgba(0,0,0,0.08)";
+        row.style.borderRadius = "10px";
+        row.style.marginBottom = "8px";
+
+        const label = document.createElement("div");
+        const kind = (r.type === "cluster") ? "Cluster" : "Video";
+        label.innerHTML = `<strong>[${kind}]</strong> ${r.code} - ${r.title}`;
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = "Add";
+        btn.onclick = () => addItem(r.type, r.id);
+
+        row.appendChild(label);
+        row.appendChild(btn);
+        wrap.appendChild(row);
+      });
+
+      resultsDiv.innerHTML = "";
+      resultsDiv.appendChild(wrap);
+    }, 250);
+  });
+
+  syncHidden();
+  renderSelectedItems();
+  refreshExpandedVideos();
+})();
+</script>
+
+{% endblock %}
