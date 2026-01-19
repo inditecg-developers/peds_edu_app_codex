@@ -1,62 +1,24 @@
 from __future__ import annotations
 
-import os
-import time
 from functools import wraps
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence
+from urllib.parse import urlencode
 
-import jwt
-from django.core.exceptions import ImproperlyConfigured
+from django.conf import settings
 from django.http import HttpRequest, HttpResponse
+from django.shortcuts import redirect
 
-SESSION_KEY = "publisher_jwt_claims"
-SESSION_CAMPAIGN_KEY = "publisher_current_campaign_id"
+# Part-C session keys (Project2)
+SESSION_KEY = getattr(settings, "SSO_SESSION_KEY_IDENTITY", "sso_identity")
+SESSION_CAMPAIGN_KEY = getattr(settings, "SSO_SESSION_KEY_CAMPAIGN", "campaign_id")
+
+# Legacy compatibility (if any old sessions exist)
+LEGACY_SESSION_KEY = "publisher_jwt_claims"
+LEGACY_CAMPAIGN_KEY = "publisher_current_campaign_id"
 
 
 def unauthorized_response() -> HttpResponse:
     return HttpResponse("unauthorised access", status=401, content_type="text/plain")
-
-
-def _extract_token(request: HttpRequest) -> Optional[str]:
-    # Query params supported (most common for “link-based access”)
-    token = (
-        request.GET.get("jwt")
-        or request.GET.get("token")
-        or request.GET.get("access_token")
-    )
-    if token:
-        return token.strip()
-
-    # Header supported as well (optional)
-    auth = (request.META.get("HTTP_AUTHORIZATION") or "").strip()
-    if auth.lower().startswith("bearer "):
-        return auth[7:].strip()
-
-    return None
-
-
-def _jwt_config() -> Tuple[str, str, str, str]:
-    """
-    Returns (algorithm, key, issuer, audience)
-    """
-    algorithm = os.getenv("PUBLISHER_JWT_ALGORITHM", "HS256").strip()
-    issuer = os.getenv("PUBLISHER_JWT_ISSUER", "project1").strip()
-    audience = os.getenv("PUBLISHER_JWT_AUDIENCE", "project2").strip()
-
-    if algorithm.upper().startswith("RS"):
-        key = os.getenv("PUBLISHER_JWT_PUBLIC_KEY", "").strip()
-        if not key:
-            raise ImproperlyConfigured(
-                "Missing PUBLISHER_JWT_PUBLIC_KEY for RS* JWT validation."
-            )
-    else:
-        key = os.getenv("PUBLISHER_JWT_SECRET", "").strip()
-        if not key:
-            raise ImproperlyConfigured(
-                "Missing PUBLISHER_JWT_SECRET for HS* JWT validation."
-            )
-
-    return algorithm, key, issuer, audience
 
 
 def _normalize_roles(value: Any) -> Sequence[str]:
@@ -67,98 +29,81 @@ def _normalize_roles(value: Any) -> Sequence[str]:
     return [str(value)]
 
 
-def validate_publisher_jwt(token: str) -> Dict[str, Any]:
-    algorithm, key, issuer, audience = _jwt_config()
-
-    claims = jwt.decode(
-        token,
-        key=key,
-        algorithms=[algorithm],
-        issuer=issuer,
-        audience=audience,
-        options={
-            "require": ["exp", "iat", "iss", "aud", "sub"],
-        },
-        leeway=30,  # allow small clock skew
+def _extract_token(request: HttpRequest) -> Optional[str]:
+    token = (
+        request.GET.get("token")
+        or request.GET.get("jwt")
+        or request.GET.get("access_token")
     )
+    if token:
+        return token.strip()
 
-    roles = _normalize_roles(claims.get("roles"))
-    if "publisher" not in [r.lower() for r in roles]:
-        raise jwt.InvalidTokenError("JWT does not contain required role: publisher")
+    auth = (request.META.get("HTTP_AUTHORIZATION") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
 
-    return claims
-
-
-def establish_publisher_session(request: HttpRequest, claims: Dict[str, Any]) -> None:
-    roles = _normalize_roles(claims.get("roles"))
-    normalized_roles = [r for r in roles]
-
-    exp = int(claims.get("exp") or 0)
-    now = int(time.time())
-    if exp <= now:
-        raise jwt.ExpiredSignatureError("Token already expired")
-
-    # Prevent session fixation
-    try:
-        request.session.cycle_key()
-    except Exception:
-        pass
-
-    request.session[SESSION_KEY] = {
-        "iss": claims.get("iss"),
-        "aud": claims.get("aud"),
-        "sub": claims.get("sub"),
-        "username": claims.get("username"),
-        "roles": normalized_roles,
-        "iat": claims.get("iat"),
-        "exp": exp,
-    }
-
-    # Align Django session expiry to JWT expiry
-    request.session.set_expiry(max(1, exp - now))
+    return None
 
 
 def get_publisher_claims(request: HttpRequest) -> Optional[Dict[str, Any]]:
-    data = request.session.get(SESSION_KEY)
-    if not data:
-        return None
+    ident = request.session.get(SESSION_KEY)
+    if isinstance(ident, dict):
+        roles = _normalize_roles(ident.get("roles"))
+        if "publisher" in [r.lower() for r in roles]:
+            return ident
 
-    exp = int(data.get("exp") or 0)
-    if exp and exp <= int(time.time()):
-        try:
-            del request.session[SESSION_KEY]
-        except Exception:
-            pass
-        return None
+    legacy = request.session.get(LEGACY_SESSION_KEY)
+    if isinstance(legacy, dict):
+        roles = _normalize_roles(legacy.get("roles"))
+        if "publisher" in [r.lower() for r in roles]:
+            return legacy
 
-    roles = _normalize_roles(data.get("roles"))
-    if "publisher" not in [r.lower() for r in roles]:
-        return None
+    return None
 
-    return dict(data)
+
+def _redirect_to_sso_consume(request: HttpRequest, token: str) -> HttpResponse:
+    campaign_id = (
+        request.GET.get("campaign_id")
+        or request.GET.get("campaign-id")
+        or request.session.get(SESSION_CAMPAIGN_KEY)
+        or request.session.get(LEGACY_CAMPAIGN_KEY)
+        or ""
+    )
+    if not campaign_id:
+        return unauthorized_response()
+
+    # next URL without token params
+    params = request.GET.copy()
+    for k in ("token", "jwt", "access_token"):
+        if k in params:
+            params.pop(k)
+
+    next_url = request.path
+    if params:
+        next_url = f"{next_url}?{params.urlencode()}"
+
+    consume_url = "/sso/consume/?" + urlencode(
+        {"token": token, "campaign_id": campaign_id, "next": next_url}
+    )
+    return redirect(consume_url)
 
 
 def publisher_required(view_func):
     """
-    Decorator:
-    - If JWT is provided (query/header), validate it and create a session.
-    - Otherwise require an existing valid publisher session.
-    - If not valid -> 401 "unauthorised access"
+    Part-C destination behavior:
+    - If valid SSO session exists -> allow
+    - Else if token present -> route via /sso/consume/
+    - Else -> 401 unauthorised access
     """
-
     @wraps(view_func)
     def _wrapped(request: HttpRequest, *args, **kwargs):
+        if get_publisher_claims(request):
+            return view_func(request, *args, **kwargs)
+
         token = _extract_token(request)
         if token:
-            try:
-                claims = validate_publisher_jwt(token)
-                establish_publisher_session(request, claims)
-            except Exception:
-                return unauthorized_response()
+            return _redirect_to_sso_consume(request, token)
 
-        if not get_publisher_claims(request):
-            return unauthorized_response()
-
-        return view_func(request, *args, **kwargs)
+        return unauthorized_response()
 
     return _wrapped
