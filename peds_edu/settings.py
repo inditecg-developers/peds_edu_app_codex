@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     "catalog.apps.CatalogConfig",
     "sharing.apps.SharingConfig",
     "publisher.apps.PublisherConfig",
+    "sso.apps.SsoConfig",
+
 ]
 
 MIDDLEWARE = [
@@ -225,3 +227,22 @@ LOGGING = {
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": "INFO"},
 }
+
+
+import os
+
+# ---------------------------------------------------------------------
+# SSO consume configuration (Project2)
+# ---------------------------------------------------------------------
+SSO_EXPECTED_ISSUER = os.getenv("SSO_EXPECTED_ISSUER", "project1")
+SSO_EXPECTED_AUDIENCE = os.getenv("SSO_EXPECTED_AUDIENCE", "project2")
+
+# Must match Project1's PUBLISHER_SSO_SHARED_SECRET
+SSO_SHARED_SECRET = os.getenv("SSO_SHARED_SECRET", "")
+
+# How long Project2’s own session should last after successful consume.
+SSO_SESSION_AGE_SECONDS = int(os.getenv("SSO_SESSION_AGE_SECONDS", "3600"))
+
+SSO_SESSION_KEY_IDENTITY = "sso_identity"
+SSO_SESSION_KEY_CAMPAIGN = "campaign_id"
+
