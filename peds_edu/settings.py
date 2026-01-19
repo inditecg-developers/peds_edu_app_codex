@@ -234,15 +234,24 @@ import os
 # ---------------------------------------------------------------------
 # SSO consume configuration (Project2)
 # ---------------------------------------------------------------------
-SSO_EXPECTED_ISSUER = os.getenv("SSO_EXPECTED_ISSUER", "project1")
-SSO_EXPECTED_AUDIENCE = os.getenv("SSO_EXPECTED_AUDIENCE", "project2")
 
-# Must match Project1's PUBLISHER_SSO_SHARED_SECRET
-SSO_SHARED_SECRET = os.getenv("SSO_SHARED_SECRET", "")
+SSO_USE_ENV = False  # TEMP: set True later when you can configure server env vars
 
-# How long Project2’s own session should last after successful consume.
-SSO_SESSION_AGE_SECONDS = int(os.getenv("SSO_SESSION_AGE_SECONDS", "3600"))
+def _sso_setting(name: str, default):
+    if SSO_USE_ENV:
+        return os.getenv(name, default)
+    return default
 
+SSO_EXPECTED_ISSUER = _sso_setting("SSO_EXPECTED_ISSUER", "project1")
+SSO_EXPECTED_AUDIENCE = _sso_setting("SSO_EXPECTED_AUDIENCE", "project2")
+
+# IMPORTANT:
+# Must match Project1's PUBLISHER_SSO_SHARED_SECRET (what Project1 uses to SIGN).
+SSO_SHARED_SECRET = _sso_setting(
+    "SSO_SHARED_SECRET",
+    _sso_setting("PUBLISHER_SSO_SHARED_SECRET", "CHANGE-ME-TO-A-LONG-RANDOM-STRING"),
+)
+
+SSO_SESSION_AGE_SECONDS = int(_sso_setting("SSO_SESSION_AGE_SECONDS", "3600"))
 SSO_SESSION_KEY_IDENTITY = "sso_identity"
 SSO_SESSION_KEY_CAMPAIGN = "campaign_id"
-
