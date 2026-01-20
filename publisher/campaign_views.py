@@ -446,6 +446,9 @@ def edit_campaign_details(request: HttpRequest, campaign_id: str) -> HttpRespons
                 campaign.banner_target_url = form.cleaned_data["banner_target_url"]
                 campaign.start_date = form.cleaned_data["start_date"]
                 campaign.end_date = form.cleaned_data["end_date"]
+                campaign.email_registration = form.cleaned_data["email_registration"]
+                campaign.wa_addition = form.cleaned_data["wa_addition"]
+
 
                 if form.cleaned_data.get("banner_small"):
                     campaign.banner_small = form.cleaned_data["banner_small"]
@@ -466,6 +469,9 @@ def edit_campaign_details(request: HttpRequest, campaign_id: str) -> HttpRespons
                 "banner_target_url": campaign.banner_target_url,
                 "start_date": campaign.start_date,
                 "end_date": campaign.end_date,
+                "email_registration": campaign.email_registration or "",
+                "wa_addition": campaign.wa_addition or "",
+
             }
         )
 
