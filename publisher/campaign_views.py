@@ -308,6 +308,8 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
                     publisher_sub=publisher_sub,
                     publisher_username=publisher_username,
                     publisher_roles=publisher_roles,
+                    email_registration=form.cleaned_data["email_registration"],
+                    wa_addition=form.cleaned_data["wa_addition"],
                 )
 
             messages.success(request, "Campaign saved. Video cluster created successfully.")
