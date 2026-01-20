@@ -318,7 +318,12 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
                 f"{reverse('campaign_publisher:publisher_landing_page')}?{urlencode({'campaign-id': campaign_id})}"
             )
     else:
-        form = CampaignCreateForm(initial={"campaign_id": campaign_id, "selected_items_json": "[]"})
+        form = CampaignCreateForm(initial={
+          "campaign_id": campaign_id,
+          "selected_items_json": "[]",
+          "email_registration": "",
+          "wa_addition": "",})
+  
 
     return render(
         request,
