@@ -34,6 +34,20 @@ class CampaignCreateForm(forms.Form):
         label="Banner click URL",
     )
 
+    # --- NEW FIELDS ---
+    email_registration = forms.CharField(
+        label="Email message for registering a new doctor",
+        widget=forms.Textarea(attrs={"rows": 4}),
+        required=True,
+    )
+
+    wa_addition = forms.CharField(
+        label="WhatsApp message for adding an already registered doctor",
+        widget=forms.Textarea(attrs={"rows": 4}),
+        required=True,
+    )
+    # ------------------
+
     start_date = forms.DateField(
         widget=forms.DateInput(attrs={"type": "date"}),
         label="Start date",
@@ -87,8 +101,14 @@ class CampaignCreateForm(forms.Form):
         if sd and ed and sd > ed:
             self.add_error("end_date", "End date must be on or after start date.")
 
-        return cleaned
+        # --- OPTIONAL CLEANUP ---
+        if "email_registration" in cleaned:
+            cleaned["email_registration"] = (cleaned.get("email_registration") or "").strip()
+        if "wa_addition" in cleaned:
+            cleaned["wa_addition"] = (cleaned.get("wa_addition") or "").strip()
+        # ----------------------
 
+        return cleaned
 
 class CampaignEditForm(CampaignCreateForm):
     # For edit: banners may be unchanged
