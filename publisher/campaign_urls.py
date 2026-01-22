@@ -36,4 +36,6 @@ urlpatterns = [
         campaign_views.api_expand_selection,
         name="api_expand_selection",
     ),
+    path("field-rep-landing-page/", campaign_views.field_rep_landing_page, name="field_rep_landing_page"),
+
 ]
