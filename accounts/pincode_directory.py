@@ -116,3 +116,44 @@ def get_state_for_pincode(pincode: str) -> Optional[str]:
     if not state:
         return None
     return _canon_state_name(state)
+
+import os
+import urllib.request
+
+def get_district_for_pincode(pincode: str) -> Optional[str]:
+    """
+    Placeholder implementation to fetch district from PIN:
+    - Uses India Post public API by default.
+    - Replace with your internal PIN master / dataset if you have one.
+
+    Control with env:
+      PINCODE_DISTRICT_LOOKUP_MODE = "india_post_api" | "none"
+    """
+    mode = (os.getenv("PINCODE_DISTRICT_LOOKUP_MODE", "india_post_api") or "").strip().lower()
+    if mode in ("none", "off", "0"):
+        return None
+
+    pin = re.sub(r"\D", "", str(pincode or ""))
+    if not re.fullmatch(r"\d{6}", pin):
+        return None
+
+    try:
+        url = f"https://api.postalpincode.in/pincode/{pin}"
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            payload = resp.read().decode("utf-8")
+        data = json.loads(payload)
+        if not isinstance(data, list) or not data:
+            return None
+        item = data[0] if isinstance(data[0], dict) else {}
+        pos = item.get("PostOffice") or []
+        if not pos or not isinstance(pos, list):
+            return None
+        po0 = pos[0] if isinstance(pos[0], dict) else {}
+        district = (po0.get("District") or "").strip()
+        return district or None
+    except Exception:
+        return None
+
+
+def get_state_and_district_for_pincode(pincode: str) -> tuple[Optional[str], Optional[str]]:
+    return get_state_for_pincode(pincode), get_district_for_pincode(pincode)
