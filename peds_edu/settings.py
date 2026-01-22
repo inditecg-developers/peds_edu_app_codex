@@ -93,71 +93,26 @@ DATABASES = {
 # MASTER FORMS DB (Project1 master DB) - new-forms-rds
 # ---------------------------------------------------------------------
 
-MASTER_DB_ALIAS = env("MASTER_DB_ALIAS", "master").strip()
+MASTER_DB_ALIAS = "master"
 
-# Preferred: provide SECRET NAME and let AWS Secrets Manager supply credentials.
-# Placeholder secret name – replace with your actual secret id/name.
-MASTER_DB_SECRET_NAME = env("MASTER_DB_SECRET_NAME", "").strip()  # e.g. "new-forms-rds/db-credentials"
-MASTER_DB_REGION = env("MASTER_DB_REGION", env("AWS_REGION", "ap-south-1")).strip()
+# ❌ Do NOT use env or secrets
+MASTER_DB_ENGINE = "django.db.backends.mysql"
+MASTER_DB_NAME = "YOUR_DATABASE_NAME"
+MASTER_DB_USER = "root"
+MASTER_DB_PASSWORD = "Hemsod-vytsew-7qypxa"
+MASTER_DB_HOST = "new-forms-rds.cbnobb8kfeuq.ap-south-1.rds.amazonaws.com"
+MASTER_DB_PORT = "3306"
 
+# Table/column config (leave as-is unless schema differs)
+MASTER_DB_DOCTOR_TABLE = "Doctor"
+MASTER_DB_DOCTOR_ID_COLUMN = "doctor_id"
+MASTER_DB_DOCTOR_WHATSAPP_COLUMN = "whatsapp_no"
 
-def _load_master_db_secret() -> dict:
-    if not MASTER_DB_SECRET_NAME:
-        return {}
-    raw = (get_secret_string(MASTER_DB_SECRET_NAME, region_name=MASTER_DB_REGION) or "").strip()
-    if not raw:
-        return {}
-    try:
-        obj = json.loads(raw)
-        return obj if isinstance(obj, dict) else {}
-    except Exception:
-        return {}
+MASTER_DB_ENROLLMENT_TABLE = "DoctorCampaignEnrollment"
+MASTER_DB_ENROLLMENT_DOCTOR_COLUMN = "doctor_id"
+MASTER_DB_ENROLLMENT_CAMPAIGN_COLUMN = "campaign_id"
+MASTER_DB_ENROLLMENT_REGISTERED_BY_COLUMN = "registered_by_id"
 
-
-_MASTER_DB_SECRET = _load_master_db_secret()
-
-
-def _secret_or_env(env_name: str, secret_keys: tuple[str, ...], default: str = "") -> str:
-    v = os.getenv(env_name, "").strip()
-    if v:
-        return v
-    for k in secret_keys:
-        sv = _MASTER_DB_SECRET.get(k)
-        if isinstance(sv, str) and sv.strip():
-            return sv.strip()
-    return default
-
-
-# NOTE: set MASTER_DB_ENGINE appropriately based on the RDS engine:
-# - postgres: "django.db.backends.postgresql"
-# - mysql:    "django.db.backends.mysql"
-MASTER_DB_ENGINE = _secret_or_env(
-    "MASTER_DB_ENGINE",
-    ("engine", "ENGINE", "db_engine", "DB_ENGINE"),
-    "django.db.backends.postgresql",  # placeholder default
-)
-
-MASTER_DB_NAME = _secret_or_env("MASTER_DB_NAME", ("dbname", "database", "DB_NAME", "name"), "")
-MASTER_DB_USER = _secret_or_env("MASTER_DB_USER", ("username", "user", "DB_USER"), "")
-MASTER_DB_PASSWORD = _secret_or_env("MASTER_DB_PASSWORD", ("password", "DB_PASSWORD"), "")
-MASTER_DB_HOST = _secret_or_env(
-    "MASTER_DB_HOST",
-    ("host", "DB_HOST"),
-    "new-forms-rds.cbnobb8kfeuq.ap-south-1.rds.amazonaws.com",
-)
-MASTER_DB_PORT = _secret_or_env("MASTER_DB_PORT", ("port", "DB_PORT"), "5432")
-
-# Table/column names are configurable in case your physical schema differs.
-MASTER_DB_DOCTOR_TABLE = env("MASTER_DB_DOCTOR_TABLE", "Doctor").strip()
-MASTER_DB_DOCTOR_ID_COLUMN = env("MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id").strip()
-MASTER_DB_DOCTOR_WHATSAPP_COLUMN = env("MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no").strip()
-
-MASTER_DB_ENROLLMENT_TABLE = env("MASTER_DB_ENROLLMENT_TABLE", "DoctorCampaignEnrollment").strip()
-MASTER_DB_ENROLLMENT_DOCTOR_COLUMN = env("MASTER_DB_ENROLLMENT_DOCTOR_COLUMN", "doctor_id").strip()
-MASTER_DB_ENROLLMENT_CAMPAIGN_COLUMN = env("MASTER_DB_ENROLLMENT_CAMPAIGN_COLUMN", "campaign_id").strip()
-MASTER_DB_ENROLLMENT_REGISTERED_BY_COLUMN = env(
-    "MASTER_DB_ENROLLMENT_REGISTERED_BY_COLUMN", "registered_by_id"
-).strip()
 
 if MASTER_DB_NAME and MASTER_DB_USER and MASTER_DB_PASSWORD and MASTER_DB_HOST:
     DATABASES[MASTER_DB_ALIAS] = {
