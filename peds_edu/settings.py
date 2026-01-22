@@ -42,7 +42,6 @@ INSTALLED_APPS = [
     "sharing.apps.SharingConfig",
     "publisher.apps.PublisherConfig",
     "sso.apps.SsoConfig",
-
 ]
 
 MIDDLEWARE = [
@@ -89,6 +88,86 @@ DATABASES = {
         "OPTIONS": {"charset": "utf8mb4"},
     }
 }
+
+# ---------------------------------------------------------------------
+# MASTER FORMS DB (Project1 master DB) - new-forms-rds
+# ---------------------------------------------------------------------
+
+MASTER_DB_ALIAS = env("MASTER_DB_ALIAS", "master").strip()
+
+# Preferred: provide SECRET NAME and let AWS Secrets Manager supply credentials.
+# Placeholder secret name – replace with your actual secret id/name.
+MASTER_DB_SECRET_NAME = env("MASTER_DB_SECRET_NAME", "").strip()  # e.g. "new-forms-rds/db-credentials"
+MASTER_DB_REGION = env("MASTER_DB_REGION", env("AWS_REGION", "ap-south-1")).strip()
+
+
+def _load_master_db_secret() -> dict:
+    if not MASTER_DB_SECRET_NAME:
+        return {}
+    raw = (get_secret_string(MASTER_DB_SECRET_NAME, region_name=MASTER_DB_REGION) or "").strip()
+    if not raw:
+        return {}
+    try:
+        obj = json.loads(raw)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+_MASTER_DB_SECRET = _load_master_db_secret()
+
+
+def _secret_or_env(env_name: str, secret_keys: tuple[str, ...], default: str = "") -> str:
+    v = os.getenv(env_name, "").strip()
+    if v:
+        return v
+    for k in secret_keys:
+        sv = _MASTER_DB_SECRET.get(k)
+        if isinstance(sv, str) and sv.strip():
+            return sv.strip()
+    return default
+
+
+# NOTE: set MASTER_DB_ENGINE appropriately based on the RDS engine:
+# - postgres: "django.db.backends.postgresql"
+# - mysql:    "django.db.backends.mysql"
+MASTER_DB_ENGINE = _secret_or_env(
+    "MASTER_DB_ENGINE",
+    ("engine", "ENGINE", "db_engine", "DB_ENGINE"),
+    "django.db.backends.postgresql",  # placeholder default
+)
+
+MASTER_DB_NAME = _secret_or_env("MASTER_DB_NAME", ("dbname", "database", "DB_NAME", "name"), "")
+MASTER_DB_USER = _secret_or_env("MASTER_DB_USER", ("username", "user", "DB_USER"), "")
+MASTER_DB_PASSWORD = _secret_or_env("MASTER_DB_PASSWORD", ("password", "DB_PASSWORD"), "")
+MASTER_DB_HOST = _secret_or_env(
+    "MASTER_DB_HOST",
+    ("host", "DB_HOST"),
+    "new-forms-rds.cbnobb8kfeuq.ap-south-1.rds.amazonaws.com",
+)
+MASTER_DB_PORT = _secret_or_env("MASTER_DB_PORT", ("port", "DB_PORT"), "5432")
+
+# Table/column names are configurable in case your physical schema differs.
+MASTER_DB_DOCTOR_TABLE = env("MASTER_DB_DOCTOR_TABLE", "Doctor").strip()
+MASTER_DB_DOCTOR_ID_COLUMN = env("MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id").strip()
+MASTER_DB_DOCTOR_WHATSAPP_COLUMN = env("MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no").strip()
+
+MASTER_DB_ENROLLMENT_TABLE = env("MASTER_DB_ENROLLMENT_TABLE", "DoctorCampaignEnrollment").strip()
+MASTER_DB_ENROLLMENT_DOCTOR_COLUMN = env("MASTER_DB_ENROLLMENT_DOCTOR_COLUMN", "doctor_id").strip()
+MASTER_DB_ENROLLMENT_CAMPAIGN_COLUMN = env("MASTER_DB_ENROLLMENT_CAMPAIGN_COLUMN", "campaign_id").strip()
+MASTER_DB_ENROLLMENT_REGISTERED_BY_COLUMN = env(
+    "MASTER_DB_ENROLLMENT_REGISTERED_BY_COLUMN", "registered_by_id"
+).strip()
+
+if MASTER_DB_NAME and MASTER_DB_USER and MASTER_DB_PASSWORD and MASTER_DB_HOST:
+    DATABASES[MASTER_DB_ALIAS] = {
+        "ENGINE": MASTER_DB_ENGINE,
+        "NAME": MASTER_DB_NAME,
+        "USER": MASTER_DB_USER,
+        "PASSWORD": MASTER_DB_PASSWORD,
+        "HOST": MASTER_DB_HOST,
+        "PORT": MASTER_DB_PORT,
+    }
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -142,12 +221,6 @@ SITE_BASE_URL = APP_BASE_URL
 # ---------------- EMAIL / SENDGRID ----------------
 
 def _extract_sendgrid_key_from_secret(secret_raw: str) -> str:
-    """
-    Your AWS secret may be:
-      - raw key string "SG...."
-      - JSON string like {"SendGrid_email":"SG...."} (your sample)
-      - JSON string like {"SENDGRID_API_KEY":"SG...."} or other variants
-    """
     raw = (secret_raw or "").strip()
     if not raw:
         return ""
@@ -156,7 +229,6 @@ def _extract_sendgrid_key_from_secret(secret_raw: str) -> str:
         try:
             obj = json.loads(raw)
             if isinstance(obj, dict):
-                # Support your sample key name plus other common ones
                 for k in (
                     "SendGrid_email",
                     "sendgrid_email",
@@ -170,7 +242,6 @@ def _extract_sendgrid_key_from_secret(secret_raw: str) -> str:
                     if isinstance(v, str) and v.strip():
                         return v.strip()
         except Exception:
-            # If JSON parse fails, fall back to treating it as raw key
             pass
 
     return raw
@@ -178,7 +249,6 @@ def _extract_sendgrid_key_from_secret(secret_raw: str) -> str:
 
 SENDGRID_API_KEY = env("SENDGRID_API_KEY", "").strip()
 if not SENDGRID_API_KEY:
-    # Optional fallback via AWS Secrets Manager
     secret_raw = (get_secret_string("SendGrid_API", region_name="ap-south-1") or "").strip()
     SENDGRID_API_KEY = _extract_sendgrid_key_from_secret(secret_raw)
 
@@ -228,7 +298,6 @@ LOGGING = {
     "root": {"handlers": ["console"], "level": "INFO"},
 }
 
-
 import os
 
 # ---------------------------------------------------------------------
@@ -237,16 +306,16 @@ import os
 
 SSO_USE_ENV = False  # TEMP: set True later when you can configure server env vars
 
+
 def _sso_setting(name: str, default):
     if SSO_USE_ENV:
         return os.getenv(name, default)
     return default
 
+
 SSO_EXPECTED_ISSUER = _sso_setting("SSO_EXPECTED_ISSUER", "project1")
 SSO_EXPECTED_AUDIENCE = _sso_setting("SSO_EXPECTED_AUDIENCE", "project2")
 
-# IMPORTANT:
-# Must match Project1's PUBLISHER_SSO_SHARED_SECRET (what Project1 uses to SIGN).
 SSO_SHARED_SECRET = _sso_setting(
     "SSO_SHARED_SECRET",
     _sso_setting("PUBLISHER_SSO_SHARED_SECRET", "CHANGE-ME-TO-A-LONG-RANDOM-STRING"),
