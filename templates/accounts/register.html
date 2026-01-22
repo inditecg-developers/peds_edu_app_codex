@@ -15,13 +15,18 @@
   <form method="post" enctype="multipart/form-data">
     {% csrf_token %}
 
-    {% for field in form %}
-      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
-      {{ field }}
-      {% if field.errors %}
-        <div class="message error">{{ field.errors|striptags }}</div>
-      {% endif %}
-    {% endfor %}
+{% for field in form %}
+  {% if field.is_hidden %}
+    {{ field }}
+  {% else %}
+    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+    {{ field }}
+    {% if field.errors %}
+      <div class="message error">{{ field.errors|striptags }}</div>
+    {% endif %}
+  {% endif %}
+{% endfor %}
+
 
     <div style="margin-top: 16px;">
       {% if mode == "modify" %}
