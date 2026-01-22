@@ -12,9 +12,13 @@ from django.urls import reverse
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
-from .forms import DoctorRegistrationForm, EmailAuthenticationForm, DoctorSetPasswordForm
+from .forms import DoctorRegistrationForm, DoctorClinicDetailsForm, EmailAuthenticationForm, DoctorSetPasswordForm
+from .pincode_directory import IndiaPincodeDirectoryNotReady, get_state_and_district_for_pincode
+from publisher.models import Campaign
+from . import master_db
+
 from .models import User, Clinic, DoctorProfile
-from .pincode_directory import IndiaPincodeDirectoryNotReady, get_state_for_pincode
+
 from .sendgrid_utils import send_email_via_sendgrid
 
 
@@ -27,15 +31,22 @@ def _build_absolute_url(path: str) -> str:
     return f"{base}{path}"
 
 
-def _send_doctor_links_email(doctor: DoctorProfile, password_setup: bool = True) -> bool:
-    """Send doctor/staff share link + (optional) password setup/reset link."""
+def _send_doctor_links_email(doctor: DoctorProfile, campaign_id: str | None = None, password_setup: bool = True) -> bool:
+    """Send doctor/staff share link + (optional) password setup/reset link, using campaign email template if present."""
     if not doctor or not doctor.user:
         return False
 
     clinic_link = _build_absolute_url(reverse("sharing:doctor_share", args=[doctor.doctor_id]))
     login_link = _build_absolute_url(reverse("accounts:login"))
 
-    body_lines = [
+    setup_link = ""
+    if password_setup:
+        token = default_token_generator.make_token(doctor.user)
+        uid = urlsafe_base64_encode(force_bytes(doctor.user.pk))
+        setup_link = _build_absolute_url(reverse("accounts:password_reset", args=[uid, token]))
+
+    # Default fallback text (in case campaign template missing)
+    fallback_lines = [
         f"Hello {doctor.user.full_name or doctor.user.email},",
         "",
         "Your clinic has access to the CPD in Clinic portal.",
@@ -44,25 +55,50 @@ def _send_doctor_links_email(doctor: DoctorProfile, password_setup: bool = True)
         f"Login link: {login_link}",
         "",
     ]
+    if setup_link:
+        fallback_lines.extend(["To set/reset your password, use the link below:", setup_link, ""])
+    fallback_lines.append("Thank you.")
+    fallback_body = "\n".join(fallback_lines)
 
-    if password_setup:
-        token = default_token_generator.make_token(doctor.user)
-        uid = urlsafe_base64_encode(force_bytes(doctor.user.pk))
-        setup_link = _build_absolute_url(reverse("accounts:password_reset", args=[uid, token]))
-        body_lines.extend(
-            [
-                "To set/reset your password, use the link below:",
-                setup_link,
-                "",
-            ]
+    template_text = ""
+    if campaign_id:
+        template_text = (
+            Campaign.objects.filter(campaign_id=campaign_id)
+            .values_list("email_registration", flat=True)
+            .first()
+            or ""
         )
 
-    body_lines.append("Thank you.")
+    if template_text.strip():
+        # Reuse the same placeholder strategy as the field-rep WhatsApp renderer.
+        def _render(template: str) -> str:
+            text = template or ""
+            replacements = {
+                "<doctor.user.full_name>": doctor.user.full_name or doctor.user.email,
+                "<doctor_name>": doctor.user.full_name or doctor.user.email,
+                "{{doctor_name}}": doctor.user.full_name or doctor.user.email,
+
+                "<clinic_link>": clinic_link,
+                "{{clinic_link}}": clinic_link,
+                "<LinkShare>": clinic_link,
+
+                "<setup_link>": setup_link,
+                "{{setup_link}}": setup_link,
+                "<LinkPW>": setup_link,
+            }
+            for k, v in replacements.items():
+                if v:
+                    text = text.replace(k, v)
+            return text
+
+        body = _render(template_text).strip()
+    else:
+        body = fallback_body
 
     return send_email_via_sendgrid(
         subject="CPD in Clinic portal access",
         to_emails=[doctor.user.email],
-        plain_text_content="\n".join(body_lines),
+        plain_text_content=body,
     )
 
 
@@ -85,39 +121,49 @@ def _pop_registration_draft(request, session_key: str) -> dict | None:
 
 def register_doctor(request):
     if request.method == "GET":
-        doctor_id = DoctorProfile._meta.get_field("doctor_id").default()
+        initial = {}
 
-        initial = {"doctor_id": doctor_id}
+        campaign_id = (request.GET.get("campaign-id") or request.GET.get("campaign_id") or "").strip()
+        field_rep_id = (request.GET.get("field_rep_id") or request.GET.get("field-rep-id") or "").strip()
 
-        # If we previously blocked submission due to invalid PIN, repopulate.
+        if campaign_id:
+            initial["campaign_id"] = campaign_id
+        if field_rep_id:
+            initial["field_rep_id"] = field_rep_id
+
         draft = _pop_registration_draft(request, session_key="doctor_registration_draft")
         if isinstance(draft, dict):
             initial.update(draft)
-            initial.setdefault("doctor_id", doctor_id)
 
         form = DoctorRegistrationForm(initial=initial)
         return render(request, "accounts/register.html", {"form": form, "mode": "register"})
 
     # POST
     form = DoctorRegistrationForm(request.POST, request.FILES)
-
     if not form.is_valid():
         return render(request, "accounts/register.html", {"form": form, "mode": "register"})
 
-    doctor_id = form.cleaned_data.get("doctor_id") or ""
-    full_name = form.cleaned_data.get("full_name") or ""
-    email = form.cleaned_data.get("email") or ""
-    whatsapp_number = form.cleaned_data.get("whatsapp_number") or ""
-    clinic_number = form.cleaned_data.get("clinic_number") or ""
-    clinic_whatsapp_number = form.cleaned_data.get("clinic_whatsapp_number") or ""
-    imc_number = form.cleaned_data.get("imc_number") or ""
-    postal_code = form.cleaned_data.get("postal_code") or ""
-    address_text = form.cleaned_data.get("address_text") or ""
-    photo = form.cleaned_data.get("photo")
+    cd = form.cleaned_data
 
-    # Compute State from PIN code directory
+    campaign_id = (cd.get("campaign_id") or "").strip()
+    field_rep_id = (cd.get("field_rep_id") or "").strip()
+
+    first_name = cd["first_name"].strip()
+    last_name = cd["last_name"].strip()
+    full_name = f"{first_name} {last_name}".strip()
+
+    email = cd["email"].strip().lower()
+    clinic_name = cd["clinic_name"].strip()
+    imc_registration_number = cd["imc_registration_number"].strip()
+    clinic_appointment_number = cd["clinic_appointment_number"].strip()
+    clinic_address = cd["clinic_address"].strip()
+    postal_code = cd["postal_code"].strip()
+    clinic_whatsapp_number = cd["clinic_whatsapp_number"].strip()
+    photo = cd["photo"]
+
+    # Compute State + District from PIN code directory
     try:
-        state = get_state_for_pincode(postal_code)
+        state, district = get_state_and_district_for_pincode(postal_code)
     except IndiaPincodeDirectoryNotReady as e:
         return HttpResponseServerError(str(e))
 
@@ -126,29 +172,44 @@ def register_doctor(request):
             request,
             session_key="doctor_registration_draft",
             draft={
-                "doctor_id": doctor_id,
-                "full_name": full_name,
+                "campaign_id": campaign_id,
+                "field_rep_id": field_rep_id,
+                "first_name": first_name,
+                "last_name": last_name,
                 "email": email,
-                "whatsapp_number": whatsapp_number,
-                "clinic_number": clinic_number,
-                "clinic_whatsapp_number": clinic_whatsapp_number,
-                "imc_number": imc_number,
+                "clinic_name": clinic_name,
+                "imc_registration_number": imc_registration_number,
+                "clinic_appointment_number": clinic_appointment_number,
+                "clinic_address": clinic_address,
                 "postal_code": postal_code,
-                "address_text": address_text,
+                "clinic_whatsapp_number": clinic_whatsapp_number,
             },
         )
         return render(
             request,
             "accounts/pincode_invalid.html",
-            {"return_url": reverse("accounts:register")},
+            {"return_url": reverse("accounts:register") + (f"?campaign-id={campaign_id}&field_rep_id={field_rep_id}" if campaign_id and field_rep_id else "")},
         )
 
-    # Duplicate email handling
+    # ------------------------------------------------------------------
+    # Duplicate handling (portal DB)
+    # ------------------------------------------------------------------
     existing_user = User.objects.filter(email=email).first()
     if existing_user:
         existing_doctor = getattr(existing_user, "doctor_profile", None)
         if existing_doctor:
-            _send_doctor_links_email(existing_doctor, password_setup=True)
+            # Best-effort: backfill enrollment in master DB for this campaign
+            try:
+                if campaign_id:
+                    master_db.ensure_enrollment(
+                        doctor_id=existing_doctor.doctor_id,
+                        campaign_id=campaign_id,
+                        registered_by=field_rep_id,
+                    )
+            except Exception:
+                pass
+
+            _send_doctor_links_email(existing_doctor, campaign_id=campaign_id or None, password_setup=True)
 
         return render(
             request,
@@ -157,21 +218,30 @@ def register_doctor(request):
                 "message": (
                     "This email address has already been registered for a doctor on this portal. "
                     "The link to login and use the system has been sent to your email. "
-                    "Follow the instructions in the email to use your system"
+                    "Follow the instructions in the email to use your system."
                 ),
                 "login_url": reverse("accounts:login"),
             },
         )
 
-    # Duplicate WhatsApp handling
     existing_whatsapp = (
         DoctorProfile.objects
         .select_related("user")
-        .filter(whatsapp_number=whatsapp_number)
+        .filter(whatsapp_number=clinic_whatsapp_number)
         .first()
     )
     if existing_whatsapp:
-        _send_doctor_links_email(existing_whatsapp, password_setup=True)
+        try:
+            if campaign_id:
+                master_db.ensure_enrollment(
+                    doctor_id=existing_whatsapp.doctor_id,
+                    campaign_id=campaign_id,
+                    registered_by=field_rep_id,
+                )
+        except Exception:
+            pass
+
+        _send_doctor_links_email(existing_whatsapp, campaign_id=campaign_id or None, password_setup=True)
 
         return render(
             request,
@@ -180,31 +250,38 @@ def register_doctor(request):
                 "message": (
                     "This WhatsApp number has already been registered for a doctor on this portal. "
                     "The link to login and use the system has been sent to your email. "
-                    "Follow the instructions in the email to use your system"
+                    "Follow the instructions in the email to use your system."
                 ),
                 "login_url": reverse("accounts:login"),
             },
         )
 
-    clinic_display_name = f"Dr. {full_name}" if full_name else ""
+    # ------------------------------------------------------------------
+    # Create NEW doctor (portal DB) + insert into master DB
+    # ------------------------------------------------------------------
+
+    # Generate a doctor_id that is unique in BOTH portal DB and master DB
+    doctor_id = DoctorProfile._meta.get_field("doctor_id").default()
+    while DoctorProfile.objects.filter(doctor_id=doctor_id).exists() or master_db.doctor_id_exists(doctor_id):
+        doctor_id = DoctorProfile._meta.get_field("doctor_id").default()
+
+    # For clinic display name, prefer clinic_name; fallback to "Dr. <full_name>"
+    clinic_display_name = clinic_name or (f"Dr. {full_name}" if full_name else "")
+
+    recruited_via = "FIELD_REP" if field_rep_id else "SELF"
 
     with transaction.atomic():
-        # Avoid doctor_id collision
-        if DoctorProfile.objects.filter(doctor_id=doctor_id).exists():
-            doctor_id = DoctorProfile._meta.get_field("doctor_id").default()
-
         user = User.objects.create_user(
             email=email,
             full_name=full_name,
             password=None,
         )
 
-        # clinic_code is auto-generated by Clinic.save()
         clinic = Clinic.objects.create(
             display_name=clinic_display_name,
-            clinic_phone=clinic_number,
+            clinic_phone=clinic_appointment_number,
             clinic_whatsapp_number=clinic_whatsapp_number,
-            address_text=address_text,
+            address_text=clinic_address,
             postal_code=postal_code,
             state=state,
         )
@@ -213,13 +290,28 @@ def register_doctor(request):
             user=user,
             doctor_id=doctor_id,
             clinic=clinic,
-            whatsapp_number=whatsapp_number,
-            imc_number=imc_number,
+            whatsapp_number=clinic_whatsapp_number,
+            imc_number=imc_registration_number,
             postal_code=postal_code,
             photo=photo,
         )
 
-    _send_doctor_links_email(doctor, password_setup=True)
+        # Insert into master DB (Doctor + DoctorCampaignEnrollment)
+        # photo_path: store same relative path used by portal storage
+        photo_path = getattr(doctor.photo, "name", "") or ""
+        try:
+            form.save_to_master_db(
+                doctor_id=doctor_id,
+                state=state or "",
+                district=district or "",
+                photo_path=photo_path,
+                recruited_via=recruited_via,
+            )
+        except Exception as e:
+            # Abort portal creation if master insert fails (keeps systems consistent)
+            raise
+
+    _send_doctor_links_email(doctor, campaign_id=campaign_id or None, password_setup=True)
 
     clinic_link_path = reverse("sharing:doctor_share", args=[doctor.doctor_id])
     clinic_link = _build_absolute_url(clinic_link_path)
@@ -264,11 +356,11 @@ def modify_clinic_details(request, doctor_id: str):
         if isinstance(draft, dict):
             initial.update(draft)
 
-        form = DoctorRegistrationForm(initial=initial)
+        form = DoctorClinicDetailsForm(initial=initial)
         return render(request, "accounts/register.html", {"form": form, "mode": "modify"})
 
     # POST
-    form = DoctorRegistrationForm(request.POST, request.FILES)
+    form = DoctorClinicDetailsForm(request.POST, request.FILES)
     if not form.is_valid():
         return render(request, "accounts/register.html", {"form": form, "mode": "modify"})
 
