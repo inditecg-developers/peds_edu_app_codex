@@ -15,6 +15,19 @@
 
   {% if campaign_id %}
     <p><strong>Campaign ID:</strong> {{ campaign_id }}</p>
+
+    {% if campaign_meta %}
+      <div class="card" style="margin-top: 16px;">
+        <h2>Campaign details from Project1</h2>
+        <p><strong>Number of doctors supported:</strong> {{ campaign_meta.num_doctors_supported }}</p>
+        <p><strong>Name:</strong> {{ campaign_meta.name }}</p>
+        <p><strong>Company name:</strong> {{ campaign_meta.company_name }}</p>
+        <p><strong>Contact person:</strong> {{ campaign_meta.contact_person_name }}</p>
+        <p><strong>Contact phone:</strong> {{ campaign_meta.contact_person_phone }}</p>
+        <p><strong>Contact email:</strong> {{ campaign_meta.contact_person_email }}</p>
+      </div>
+    {% endif %}
+
   {% else %}
     <p class="muted">
       No campaign-id was provided in the link. You can still edit existing campaigns.
