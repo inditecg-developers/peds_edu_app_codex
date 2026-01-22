@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}Field Rep Landing{% endblock %}
+{% block header_title %}Field Rep Landing{% endblock %}
+
+{% block content %}
+  <div class="card">
+    <h2>Register doctor for campaign</h2>
+
+    <p><strong>Campaign ID:</strong> {{ campaign_id }}</p>
+
+    {% if campaign %}
+      <p><strong>Campaign name:</strong> {{ campaign.new_video_cluster_name }}</p>
+      <p><strong>Doctors registered:</strong> {{ enrolled_count }}{% if doctors_supported %} / {{ doctors_supported }}{% endif %}</p>
+    {% endif %}
+
+    {% if limit_reached %}
+      <div class="message error" style="margin-top: 12px;">
+        {{ limit_message }}
+      </div>
+    {% else %}
+      <form method="post">
+        {% csrf_token %}
+        {% for field in form %}
+          <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+          {{ field }}
+          {% if field.errors %}
+            <div class="message error">{{ field.errors|striptags }}</div>
+          {% endif %}
+        {% endfor %}
+        <div style="margin-top: 16px;">
+          <button type="submit">Submit</button>
+        </div>
+      </form>
+    {% endif %}
+  </div>
+{% endblock %}
