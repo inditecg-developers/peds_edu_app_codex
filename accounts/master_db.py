@@ -519,7 +519,7 @@ def insert_doctor_row(
         doctor_id,
         first_name,
         last_name,
-        email,
+        email.lower(),
         clinic_name,
         imc_registration_number,
         clinic_phone,
@@ -774,3 +774,140 @@ def resolve_field_rep_for_campaign(*, campaign_id: str, field_rep_identifier: st
                     return fr
 
     return None
+
+
+def find_doctor_by_email_or_whatsapp(*, email: str, whatsapp: str) -> Optional[MasterDoctor]:
+    """
+    Find existing doctor in MASTER DB by email OR WhatsApp.
+    """
+    email_n = (email or "").strip().lower()
+    wa_n = normalize_wa_for_lookup(whatsapp)
+
+    if not email_n and not wa_n:
+        return None
+
+    conn = get_master_connection()
+    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "redflags_doctor")
+
+    id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
+    fn_col = getattr(settings, "MASTER_DB_DOCTOR_FIRST_NAME_COLUMN", "first_name")
+    ln_col = getattr(settings, "MASTER_DB_DOCTOR_LAST_NAME_COLUMN", "last_name")
+    email_col = getattr(settings, "MASTER_DB_DOCTOR_EMAIL_COLUMN", "email")
+    wa_col = getattr(settings, "MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no")
+
+    where = []
+    vals = []
+
+    if email_n:
+        where.append(f"LOWER({qn(email_col)}) = LOWER(%s)")
+        vals.append(email_n)
+
+    if wa_n:
+        where.append(f"{qn(wa_col)} = %s")
+        vals.append(wa_n)
+
+    sql = (
+        f"SELECT {qn(id_col)}, {qn(fn_col)}, {qn(ln_col)}, {qn(email_col)}, {qn(wa_col)} "
+        f"FROM {qn(table)} "
+        f"WHERE {' OR '.join(where)} "
+        f"LIMIT 1"
+    )
+
+    with conn.cursor() as cur:
+        cur.execute(sql, vals)
+        row = cur.fetchone()
+
+    if not row:
+        return None
+
+    return MasterDoctor(
+        doctor_id=str(row[0] or "").strip(),
+        first_name=str(row[1] or "").strip(),
+        last_name=str(row[2] or "").strip(),
+        email=str(row[3] or "").strip(),
+        whatsapp_no=str(row[4] or "").strip(),
+    )
+
+
+def generate_doctor_id(prefix: str = "DR", max_tries: int = 10) -> str:
+    """
+    Generate a unique doctor_id for MASTER DB.
+    Example: DR1706012345
+    """
+    for _ in range(max_tries):
+        did = f"{prefix}{int(time.time() * 1000)}"
+        if not doctor_id_exists(did):
+            return did
+        time.sleep(0.01)
+
+    raise RuntimeError("Unable to generate unique doctor_id in MASTER DB")
+
+
+def create_doctor_with_enrollment(
+    *,
+    doctor_id: str,
+    first_name: str,
+    last_name: str,
+    email: str,
+    whatsapp: str,
+    clinic_name: str,
+    clinic_phone: str = "",
+    clinic_appointment_number: str = "",
+    clinic_address: str = "",
+    imc_number: str = "",
+    postal_code: str = "",
+    state: str = "",
+    district: str = "",
+    photo_path: str = "",
+    campaign_id: Optional[str] = None,
+    recruited_via: str = "SELF",
+    registered_by: Optional[str] = None,
+) -> None:
+    """
+    Atomically:
+      1) Insert doctor into MASTER DB
+      2) Ensure campaign enrollment (if campaign_id provided)
+
+    This is the ONLY function register_doctor should call.
+    """
+
+    conn = get_master_connection()
+
+    with conn.cursor() as cur:
+        try:
+            # -------------------------
+            # Insert doctor
+            # -------------------------
+            insert_doctor_row(
+                doctor_id=doctor_id,
+                first_name=first_name,
+                last_name=last_name,
+                email=email,
+                clinic_name=clinic_name,
+                imc_registration_number=imc_number,
+                clinic_phone=clinic_phone,
+                clinic_appointment_number=clinic_appointment_number,
+                clinic_address=clinic_address,
+                postal_code=postal_code,
+                state=state,
+                district=district,
+                whatsapp_no=whatsapp,
+                receptionist_whatsapp_number="",
+                photo_path=photo_path,
+                field_rep_id=registered_by or "",
+                recruited_via=recruited_via,
+            )
+
+            # -------------------------
+            # Campaign enrollment
+            # -------------------------
+            if campaign_id:
+                ensure_enrollment(
+                    doctor_id=doctor_id,
+                    campaign_id=campaign_id,
+                    registered_by=registered_by or "",
+                )
+
+        except IntegrityError:
+            # Doctor already exists (race / retry case)
+            pass
