@@ -88,22 +88,37 @@ def _redirect_to_sso_consume(request: HttpRequest, token: str) -> HttpResponse:
     return redirect(consume_url)
 
 
+from functools import wraps
+from django.http import HttpResponseForbidden
+
 def publisher_required(view_func):
-    """
-    Part-C destination behavior:
-    - If valid SSO session exists -> allow
-    - Else if token present -> route via /sso/consume/
-    - Else -> 401 unauthorised access
-    """
     @wraps(view_func)
-    def _wrapped(request: HttpRequest, *args, **kwargs):
-        if get_publisher_claims(request):
-            return view_func(request, *args, **kwargs)
+    def _wrapped_view(request, *args, **kwargs):
+        print("---- publisher_required START ----")
+        print("PATH:", request.path)
+        print("METHOD:", request.method)
+        print("HEADERS AUTH:", request.headers.get("Authorization"))
+        print("COOKIES:", request.COOKIES)
+        print("USER AUTHENTICATED:", getattr(request.user, "is_authenticated", None))
+        print("USER:", request.user)
 
-        token = _extract_token(request)
-        if token:
-            return _redirect_to_sso_consume(request, token)
+        # If you are using JWT
+        token = request.headers.get("Authorization")
+        print("JWT TOKEN:", token)
 
-        return unauthorized_response()
+        # If user is expected to be publisher
+        if not request.user.is_authenticated:
+            print("BLOCKED: User not authenticated")
+            return HttpResponseForbidden("Unauthorised access")
 
-    return _wrapped
+        if not getattr(request.user, "is_publisher", False):
+            print("BLOCKED: User is not publisher")
+            return HttpResponseForbidden("Unauthorised access")
+
+        print("publisher_required PASSED")
+        print("---- publisher_required END ----")
+
+        return view_func(request, *args, **kwargs)
+
+    return _wrapped_view
+
