@@ -112,25 +112,40 @@ class MasterCampaign:
 
 
 def get_campaign(campaign_id: str) -> Optional[MasterCampaign]:
-    cid = (campaign_id or "").strip()
-    if not cid:
+    """
+    MASTER Campaign lookup for the admin-project schema.
+
+    - Campaign PK column is 'id' (UUIDField).
+    - In MySQL, UUIDField is typically stored as CHAR(32) without hyphens.
+    - Accepts both:
+        7ea0883d-9791-4703-b569-c1f9f8d25705  (hyphenated)
+        7ea0883d97914703b569c1f9f8d25705      (hex)
+    """
+    cid_raw = (campaign_id or "").strip()
+    if not cid_raw:
         return None
 
-    conn = get_master_connection()
-    table = getattr(settings, "MASTER_DB_CAMPAIGN_TABLE", "publisher_campaign")
+    cid_norm = cid_raw.replace("-", "")
 
-    id_col = getattr(settings, "MASTER_DB_CAMPAIGN_ID_COLUMN", "campaign_id")
-    ds_col = getattr(settings, "MASTER_DB_CAMPAIGN_DOCTORS_SUPPORTED_COLUMN", "doctors_supported")
-    wa_col = getattr(settings, "MASTER_DB_CAMPAIGN_WA_ADDITION_COLUMN", "wa_addition")
-    vc_col = getattr(settings, "MASTER_DB_CAMPAIGN_VIDEO_CLUSTER_COLUMN", "new_video_cluster_name")
-    er_col = getattr(settings, "MASTER_DB_CAMPAIGN_EMAIL_REGISTRATION_COLUMN", "email_registration")
+    conn = get_master_connection()
+
+    table = getattr(settings, "MASTER_DB_CAMPAIGN_TABLE", "campaign_campaign")
+    id_col = getattr(settings, "MASTER_DB_CAMPAIGN_ID_COLUMN", "id")
+
+    ds_col = getattr(settings, "MASTER_DB_CAMPAIGN_DOCTORS_SUPPORTED_COLUMN", "num_doctors_supported")
+    wa_col = getattr(settings, "MASTER_DB_CAMPAIGN_WA_ADDITION_COLUMN", "add_to_campaign_message")
+    vc_col = getattr(settings, "MASTER_DB_CAMPAIGN_VIDEO_CLUSTER_COLUMN", "name")
+    er_col = getattr(settings, "MASTER_DB_CAMPAIGN_EMAIL_REGISTRATION_COLUMN", "register_message")
 
     sql = (
         f"SELECT {qn(id_col)}, {qn(ds_col)}, {qn(wa_col)}, {qn(vc_col)}, {qn(er_col)} "
-        f"FROM {qn(table)} WHERE {qn(id_col)} = %s LIMIT 1"
+        f"FROM {qn(table)} "
+        f"WHERE {qn(id_col)} = %s OR {qn(id_col)} = %s "
+        f"LIMIT 1"
     )
+
     with conn.cursor() as cur:
-        cur.execute(sql, [cid])
+        cur.execute(sql, [cid_norm, cid_raw])
         row = cur.fetchone()
 
     if not row:
@@ -142,12 +157,13 @@ def get_campaign(campaign_id: str) -> Optional[MasterCampaign]:
         doctors_supported = 0
 
     return MasterCampaign(
-        campaign_id=str(row[0]),
+        campaign_id=str(row[0] or "").strip(),  # will typically be CHAR(32) (no hyphens)
         doctors_supported=doctors_supported,
-        wa_addition=str(row[2] or ""),
-        new_video_cluster_name=str(row[3] or ""),
-        email_registration=str(row[4] or ""),
+        wa_addition=str(row[2] or ""),          # mapped from add_to_campaign_message
+        new_video_cluster_name=str(row[3] or ""),  # mapped from name
+        email_registration=str(row[4] or ""),   # mapped from register_message
     )
+
 
 
 # -------------------------------
@@ -393,22 +409,29 @@ def is_fieldrep_linked_to_campaign(*, campaign_id: str, field_rep_id: int) -> bo
 
 def get_field_rep(field_rep_id: str) -> Optional[MasterFieldRep]:
     """
-    Correct FieldRep lookup against campaign_fieldrep (NOT campaign_campaignfieldrep).
-    Supports:
-      - id
-      - user_id
-      - brand_supplied_field_rep_id
-      - trailing digits from strings like "fieldrep_15"
+    Deterministic FieldRep lookup.
+
+    Priority:
+      1) brand_supplied_field_rep_id exact match (string)
+      2) id (pk) match if numeric (or trailing digits)
+      3) user_id match if numeric (or trailing digits)
+
+    This prevents the bug where id=15 accidentally returns the row whose user_id=15.
     """
     fid_raw = (field_rep_id or "").strip()
     if not fid_raw:
         return None
 
-    # candidates: raw and trailing digits
-    candidates = [fid_raw]
+    # pull trailing digits e.g. "fieldrep_15" -> 15
+    tail_digits = None
     m = re.search(r"(\d+)$", fid_raw)
-    if m and m.group(1) not in candidates:
-        candidates.append(m.group(1))
+    if m:
+        try:
+            tail_digits = int(m.group(1))
+        except Exception:
+            tail_digits = None
+
+    conn = get_master_connection()
 
     table = getattr(settings, "MASTER_DB_FIELD_REP_TABLE", "campaign_fieldrep")
     pk_col = getattr(settings, "MASTER_DB_FIELD_REP_PK_COLUMN", "id")
@@ -418,62 +441,55 @@ def get_field_rep(field_rep_id: str) -> Optional[MasterFieldRep]:
     name_col = getattr(settings, "MASTER_DB_FIELD_REP_FULL_NAME_COLUMN", "full_name")
     phone_col = getattr(settings, "MASTER_DB_FIELD_REP_PHONE_COLUMN", "phone_number")
 
-    str_candidates = []
-    int_candidates = []
-    for c in candidates:
-        c = (c or "").strip()
-        if not c:
-            continue
-        str_candidates.append(c)
-        if c.isdigit():
-            try:
-                int_candidates.append(int(c))
-            except Exception:
-                pass
+    def _row_to_obj(row):
+        return MasterFieldRep(
+            id=str(row[0]),
+            full_name=str(row[1] or "").strip(),
+            phone_number=str(row[2] or "").strip(),
+            brand_supplied_field_rep_id=str(row[3] or "").strip(),
+            is_active=bool(row[4]),
+        )
 
-    if not str_candidates and not int_candidates:
-        return None
-
-    where_parts = []
-    params = []
-
-    # external id (string)
-    if str_candidates:
-        where_parts.append("(" + " OR ".join([f"{qn(ext_col)} = %s"] * len(str_candidates)) + ")")
-        params.extend(str_candidates)
-
-    # pk and user_id (numeric)
-    if int_candidates:
-        where_parts.append("(" + " OR ".join([f"{qn(pk_col)} = %s"] * len(int_candidates)) + ")")
-        params.extend(int_candidates)
-
-        where_parts.append("(" + " OR ".join([f"{qn(user_id_col)} = %s"] * len(int_candidates)) + ")")
-        params.extend(int_candidates)
-
-    where_sql = " OR ".join(where_parts)
-
-    conn = get_master_connection()
-    sql = (
+    # 1) external id exact match
+    sql_ext = (
         f"SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(ext_col)}, {qn(active_col)} "
-        f"FROM {qn(table)} "
-        f"WHERE {where_sql} "
-        f"LIMIT 1"
+        f"FROM {qn(table)} WHERE {qn(ext_col)} = %s LIMIT 1"
     )
-
     with conn.cursor() as cur:
-        cur.execute(sql, params)
+        cur.execute(sql_ext, [fid_raw])
         row = cur.fetchone()
+    if row:
+        return _row_to_obj(row)
 
-    if not row:
+    # numeric candidates: fid_raw if numeric, else trailing digits
+    num = int(fid_raw) if fid_raw.isdigit() else tail_digits
+    if num is None:
         return None
 
-    return MasterFieldRep(
-        id=str(row[0]),
-        full_name=str(row[1] or "").strip(),
-        phone_number=str(row[2] or "").strip(),
-        brand_supplied_field_rep_id=str(row[3] or "").strip(),
-        is_active=bool(row[4]),
+    # 2) pk match FIRST
+    sql_pk = (
+        f"SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(ext_col)}, {qn(active_col)} "
+        f"FROM {qn(table)} WHERE {qn(pk_col)} = %s LIMIT 1"
     )
+    with conn.cursor() as cur:
+        cur.execute(sql_pk, [num])
+        row = cur.fetchone()
+    if row:
+        return _row_to_obj(row)
+
+    # 3) user_id match
+    sql_uid = (
+        f"SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(ext_col)}, {qn(active_col)} "
+        f"FROM {qn(table)} WHERE {qn(user_id_col)} = %s LIMIT 1"
+    )
+    with conn.cursor() as cur:
+        cur.execute(sql_uid, [num])
+        row = cur.fetchone()
+    if row:
+        return _row_to_obj(row)
+
+    return None
+
 
 
 def resolve_field_rep_for_campaign(*, campaign_id: str, field_rep_identifier: str, token_sub: str = "") -> Optional[MasterFieldRep]:

@@ -328,7 +328,7 @@ PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://portal.cpdinclinic.co.in
 
 
 # -----------------------------
-# MASTER DB connection (hardcoded)
+# MASTER DB alias + connection
 # -----------------------------
 MASTER_DB_ALIAS = "master"
 
@@ -343,9 +343,13 @@ DATABASES[MASTER_DB_ALIAS] = {
     "CONN_MAX_AGE": 60,
 }
 
+
+
 # -----------------------------
-# MASTER TABLE MAPPINGS (from your db output)
+# MASTER TABLES/COLUMNS (based on your DB output + models)
 # -----------------------------
+
+# FieldRep table
 MASTER_DB_FIELD_REP_TABLE = "campaign_fieldrep"
 MASTER_DB_FIELD_REP_PK_COLUMN = "id"
 MASTER_DB_FIELD_REP_USER_ID_COLUMN = "user_id"
@@ -354,12 +358,18 @@ MASTER_DB_FIELD_REP_ACTIVE_COLUMN = "is_active"
 MASTER_DB_FIELD_REP_FULL_NAME_COLUMN = "full_name"
 MASTER_DB_FIELD_REP_PHONE_COLUMN = "phone_number"
 
-# Join table: CampaignFieldRep
+# CampaignFieldRep join table
 MASTER_DB_CAMPAIGN_FIELD_REP_TABLE = "campaign_campaignfieldrep"
 MASTER_DB_CAMPAIGN_FIELD_REP_PK_COLUMN = "id"
 MASTER_DB_CAMPAIGN_FIELD_REP_CAMPAIGN_COLUMN = "campaign_id"
 MASTER_DB_CAMPAIGN_FIELD_REP_FIELD_REP_COLUMN = "field_rep_id"
 
-# (Optional) public base url
-PUBLIC_BASE_URL = "https://portal.cpdinclinic.co.in"
+# Campaign table (IMPORTANT: id is the primary key)
+MASTER_DB_CAMPAIGN_TABLE = "campaign_campaign"
+MASTER_DB_CAMPAIGN_ID_COLUMN = "id"
+MASTER_DB_CAMPAIGN_DOCTORS_SUPPORTED_COLUMN = "num_doctors_supported"
+MASTER_DB_CAMPAIGN_WA_ADDITION_COLUMN = "add_to_campaign_message"   # used as wa_addition in Project2 flow
+MASTER_DB_CAMPAIGN_VIDEO_CLUSTER_COLUMN = "name"                    # used as new_video_cluster_name in Project2 flow
+MASTER_DB_CAMPAIGN_EMAIL_REGISTRATION_COLUMN = "register_message"   # used as email_registration in Project2 flow
 
+PUBLIC_BASE_URL = "https://portal.cpdinclinic.co.in"
