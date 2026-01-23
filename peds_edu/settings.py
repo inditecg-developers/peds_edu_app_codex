@@ -379,3 +379,15 @@ MASTER_DB_CAMPAIGN_VIDEO_CLUSTER_COLUMN = "name"                    # used as ne
 MASTER_DB_CAMPAIGN_EMAIL_REGISTRATION_COLUMN = "register_message"   # used as email_registration in Project2 flow
 
 PUBLIC_BASE_URL = "https://portal.cpdinclinic.co.in"
+
+
+# -----------------------------
+# MASTER Doctor table mapping
+# -----------------------------
+MASTER_DB_DOCTOR_TABLE = "redflags_doctor"
+
+MASTER_DB_DOCTOR_ID_COLUMN = "doctor_id"
+MASTER_DB_DOCTOR_FIRST_NAME_COLUMN = "first_name"
+MASTER_DB_DOCTOR_LAST_NAME_COLUMN = "last_name"
+MASTER_DB_DOCTOR_EMAIL_COLUMN = "email"
+MASTER_DB_DOCTOR_WHATSAPP_COLUMN = "whatsapp_no"

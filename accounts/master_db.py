@@ -186,34 +186,83 @@ class MasterDoctor:
 
 
 def doctor_id_exists(doctor_id: str) -> bool:
+    did = (doctor_id or "").strip()
+    if not did:
+        return False
+
     conn = get_master_connection()
-    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "Doctor")
+    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "redflags_doctor")
     id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
 
     sql = f"SELECT 1 FROM {qn(table)} WHERE {qn(id_col)} = %s LIMIT 1"
     with conn.cursor() as cur:
-        cur.execute(sql, [doctor_id])
+        cur.execute(sql, [did])
         return cur.fetchone() is not None
 
 
-def get_doctor_by_whatsapp(whatsapp_no: str) -> Optional[MasterDoctor]:
-    conn = get_master_connection()
-    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "Doctor")
-    id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
-    wa_col = getattr(settings, "MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no")
 
-    wa = normalize_wa_for_lookup(whatsapp_no)
-    if not wa:
+def get_doctor_by_whatsapp(whatsapp_no: str) -> Optional[MasterDoctor]:
+    """
+    Lookup doctor in MASTER DB by WhatsApp number from table redflags_doctor.
+
+    Handles common formatting:
+      - 10 digit
+      - 91 + 10 digit
+      - +91 + 10 digit
+      - 0 + 10 digit
+      - mixed formatting with spaces/dashes
+
+    Returns MasterDoctor or None.
+    """
+    import re
+
+    raw = (whatsapp_no or "").strip()
+    digits = re.sub(r"\D", "", raw)
+
+    if not digits:
         return None
 
-    candidates = [wa]
-    if len(wa) == 10:
-        candidates.append(f"91{wa}")
+    # Normalize down to 10 digits where possible
+    base10 = digits
+    if len(base10) == 12 and base10.startswith("91"):
+        base10 = base10[2:]
+    elif len(base10) == 11 and base10.startswith("0"):
+        base10 = base10[1:]
+    elif len(base10) > 10:
+        # last 10 digits is often the actual number
+        base10 = base10[-10:]
 
-    placeholders = " OR ".join([f"{qn(wa_col)} = %s"] * len(candidates))
+    candidates = []
+    seen = set()
+
+    def _add(x: str) -> None:
+        x = (x or "").strip()
+        if x and x not in seen:
+            seen.add(x)
+            candidates.append(x)
+
+    # Add candidates in likely-match order
+    _add(base10)                 # 10-digit
+    _add("91" + base10)          # 91XXXXXXXXXX
+    _add("+91" + base10)         # +91XXXXXXXXXX
+    _add("0" + base10)           # 0XXXXXXXXXX
+    _add(digits)                 # original digits-only form (fallback)
+
+    conn = get_master_connection()
+
+    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "redflags_doctor")
+    id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
+    fn_col = getattr(settings, "MASTER_DB_DOCTOR_FIRST_NAME_COLUMN", "first_name")
+    ln_col = getattr(settings, "MASTER_DB_DOCTOR_LAST_NAME_COLUMN", "last_name")
+    email_col = getattr(settings, "MASTER_DB_DOCTOR_EMAIL_COLUMN", "email")
+    wa_col = getattr(settings, "MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no")
+
+    where = " OR ".join([f"{qn(wa_col)} = %s"] * len(candidates))
     sql = (
-        f"SELECT {qn(id_col)}, {qn('first_name')}, {qn('last_name')}, {qn('email')}, {qn(wa_col)} "
-        f"FROM {qn(table)} WHERE {placeholders} LIMIT 1"
+        f"SELECT {qn(id_col)}, {qn(fn_col)}, {qn(ln_col)}, {qn(email_col)}, {qn(wa_col)} "
+        f"FROM {qn(table)} "
+        f"WHERE {where} "
+        f"LIMIT 1"
     )
 
     with conn.cursor() as cur:
@@ -230,6 +279,7 @@ def get_doctor_by_whatsapp(whatsapp_no: str) -> Optional[MasterDoctor]:
         email=str(row[3] or "").strip(),
         whatsapp_no=str(row[4] or "").strip(),
     )
+
 
 
 from typing import Dict, List, Optional, Tuple
