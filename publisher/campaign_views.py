@@ -109,7 +109,6 @@ def _render_campaign_text_template(template: str, *, doctor_name: str, clinic_li
     return text
 
 
-@publisher_required
 @require_http_methods(["GET", "POST"])
 def field_rep_landing_page(request: HttpRequest) -> HttpResponse:
         """
