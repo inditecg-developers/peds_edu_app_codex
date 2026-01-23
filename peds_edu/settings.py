@@ -325,3 +325,24 @@ MASTER_DB_CAMPAIGN_EMAIL_REGISTRATION_COLUMN = os.getenv("MASTER_DB_CAMPAIGN_EMA
 
 # Public base URL used for absolute links
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "https://portal.cpdinclinic.co.in").rstrip("/")
+
+
+# ------------------------------------------------------------
+# TEMPORARY: Hardcoded MASTER DB config (do not commit secrets)
+# ------------------------------------------------------------
+MASTER_DB_ALIAS = "master"
+
+DATABASES[MASTER_DB_ALIAS] = {
+    "ENGINE": "django.db.backends.mysql",
+    "NAME": "healthcare_forms",
+    "USER": "admin",
+    "PASSWORD": "Hemsod-vytsew-7qypxa",
+    "HOST": "new-forms-rds.cbnobb8kfeuq.ap-south-1.rds.amazonaws.com",
+    "PORT": "3306",
+    "OPTIONS": {
+        "charset": "utf8mb4",
+    },
+}
+
+# (Optional) Keep connections open a bit to reduce reconnect overhead
+DATABASES[MASTER_DB_ALIAS]["CONN_MAX_AGE"] = 60
