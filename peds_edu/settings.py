@@ -391,3 +391,74 @@ MASTER_DB_DOCTOR_FIRST_NAME_COLUMN = "first_name"
 MASTER_DB_DOCTOR_LAST_NAME_COLUMN = "last_name"
 MASTER_DB_DOCTOR_EMAIL_COLUMN = "email"
 MASTER_DB_DOCTOR_WHATSAPP_COLUMN = "whatsapp_no"
+
+
+
+
+# ---------------- MASTER DB (Doctor credentials + profile source) ----------------
+# Django DB connection alias name (used in code as settings.MASTER_DB_ALIAS)
+MASTER_DB_ALIAS = env("MASTER_DB_ALIAS", "master")
+
+# Physical MySQL database/schema name (the left-hand part of MASTER_DB_ALIAS.redflags_doctor)
+# Put the actual DB name here via env var or AWS secret.
+MASTER_DB_NAME = env("MASTER_DB_NAME", "").strip()
+
+# Table name holding doctors
+MASTER_DOCTOR_TABLE = env("MASTER_DOCTOR_TABLE", "redflags_doctor").strip()
+
+# AWS Secrets Manager (placeholders)
+MASTER_DB_SECRET_NAME = env("MASTER_DB_SECRET_NAME", "").strip()  # e.g. "prod/new-forms-rds/master-mysql"
+MASTER_DB_REGION = env("MASTER_DB_REGION", "ap-south-1").strip()
+
+def _parse_master_db_secret(secret_raw: str) -> dict:
+    """
+    Supports common AWS RDS secret JSON formats.
+    Expected JSON keys (common): host, username, password, dbname, port
+    """
+    if not secret_raw:
+        return {}
+    try:
+        obj = json.loads(secret_raw)
+    except Exception:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+
+    return {
+        "HOST": obj.get("host") or obj.get("hostname") or "",
+        "PORT": str(obj.get("port") or "3306"),
+        "NAME": obj.get("dbname") or obj.get("database") or obj.get("db") or "",
+        "USER": obj.get("username") or obj.get("user") or "",
+        "PASSWORD": obj.get("password") or obj.get("pass") or "",
+    }
+
+_master_secret_cfg = {}
+if MASTER_DB_SECRET_NAME:
+    secret_raw = (get_secret_string(MASTER_DB_SECRET_NAME, region_name=MASTER_DB_REGION) or "").strip()
+    _master_secret_cfg = _parse_master_db_secret(secret_raw)
+
+# Always define the alias so the code can use connections[settings.MASTER_DB_ALIAS].
+
+# Optional: if your master DB uses different column names, override mapping here
+MASTER_DOCTOR_FIELD_MAP = {
+  "doctor_id": "doctor_id",
+  "first_name": "first_name",
+  "last_name": "last_name",
+  "email": "email",
+  "whatsapp_no": "whatsapp_no",
+  "clinic_name": "clinic_name",
+  "clinic_phone": "clinic_phone",
+  "clinic_whatsapp": "receptionist_whatsapp_number",
+  "clinic_address": "clinic_address",
+  "state": "state",
+  "postal_code": "postal_code",
+  "imc_number": "imc_registration_number",
+  "doctor_password": "clinic_password_hash",
+  "user1_email": "clinic_user1_email",
+  "user1_name": "clinic_user1_name",
+  "user1_password": "clinic_user1_password_hash",
+  "user2_email": "clinic_user2_email",
+  "user2_name": "clinic_user2_name",
+  "user2_password": "clinic_user2_password_hash",
+  "doctor_password_set_at": "clinic_password_set_at",
+}

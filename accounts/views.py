@@ -21,6 +21,15 @@ from .models import User, Clinic, DoctorProfile
 
 from .sendgrid_utils import send_email_via_sendgrid
 
+from peds_edu.master_db import (
+    resolve_master_doctor_auth,
+    resolve_master_doctor_identity,
+    get_stored_password_for_role,
+    looks_like_hash,
+    generate_temporary_password,
+    update_master_password,
+)
+
 
 # ---------------------------------------------------------------------
 # Utilities
@@ -412,7 +421,44 @@ def modify_clinic_details(request, doctor_id: str):
 # ---------------------------------------------------------------------
 
 def doctor_login(request):
+    """
+    Doctor/clinic-staff login:
+      1) First tries master DB (MASTER_DB_ALIAS.redflags_doctor).
+      2) If not matched, falls back to existing portal auth (publisher/staff users).
+    """
     if request.method == "POST":
+        # Try master DB auth first
+        email = (request.POST.get("username") or "").strip().lower()  # AuthenticationForm uses "username"
+        raw_password = (request.POST.get("password") or "").strip()
+
+        if email and raw_password:
+            try:
+                master_auth = resolve_master_doctor_auth(email, raw_password)
+            except Exception:
+                master_auth = None
+
+            if master_auth:
+                # Ensure a local Django user exists for session/login_required
+                user, created = User.objects.get_or_create(
+                    email=master_auth.login_email,
+                    defaults={"full_name": master_auth.display_name},
+                )
+                # Keep header name reasonably updated
+                if not created and (user.full_name or "").strip() != (master_auth.display_name or "").strip():
+                    user.full_name = master_auth.display_name
+                    user.save(update_fields=["full_name"])
+
+                # Log in (manual backend; user may have unusable password locally)
+                login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+
+                # Store doctor_id in session for authorization in doctor_share
+                request.session["master_doctor_id"] = master_auth.doctor_id
+                request.session["master_login_email"] = master_auth.login_email
+                request.session["master_login_role"] = master_auth.role
+
+                return redirect("sharing:doctor_share", doctor_id=master_auth.doctor_id)
+
+        # Fall back to existing local auth (e.g., publisher users)
         form = EmailAuthenticationForm(request, data=request.POST)
         if form.is_valid():
             user = form.get_user()
@@ -421,17 +467,28 @@ def doctor_login(request):
             if doctor:
                 return redirect("sharing:doctor_share", doctor_id=doctor.doctor_id)
             return redirect("publisher:dashboard")
+
         messages.error(request, "Invalid login.")
     else:
         form = EmailAuthenticationForm(request)
+
     return render(request, "accounts/login.html", {"form": form})
+
 
 
 @login_required
 def doctor_logout(request):
+    # logout() flushes the session; this is just explicit
+    for k in ["master_doctor_id", "master_login_email", "master_login_role"]:
+        try:
+            request.session.pop(k, None)
+        except Exception:
+            pass
+
     logout(request)
     messages.info(request, "Logged out.")
     return redirect("accounts:login")
+
 
 
 def _send_password_reset_email(user: User) -> bool:
@@ -458,18 +515,91 @@ def _send_password_reset_email(user: User) -> bool:
 
 
 def request_password_reset(request):
+    """
+    Doctor/clinic-staff forgot password:
+
+    - Reads the account from master DB (redflags_doctor).
+    - If the stored password is plaintext (rare/insecure), emails it as-is.
+    - If the stored password is a hash (common), generates a temporary password,
+      updates the master DB hash, and emails the temporary password.
+
+    Notes:
+    - This requires the master DB credentials to have UPDATE permission if hashes are used.
+    - Falls back to the existing portal reset-link flow for local users (publishers/admins).
+    """
     if request.method == "POST":
         email = (request.POST.get("email") or "").strip().lower()
+
+        # 1) Try master DB doctor/staff accounts
+        ident = None
+        try:
+            ident = resolve_master_doctor_identity(email)
+        except Exception:
+            ident = None
+
+        if ident:
+            stored = get_stored_password_for_role(ident.row, ident.role)
+
+            password_to_send = None
+            email_subject = "Your CPD in Clinic portal password"
+            greeting_name = (ident.display_name or email).strip()
+
+            # If the DB stores plaintext, you *can* email it (as requested).
+            # If it's a hash (not retrievable), we reset it to a temporary password.
+            if stored and not looks_like_hash(stored):
+                password_to_send = stored
+            else:
+                # Reset to a temporary password and update the master DB hash
+                tmp = generate_temporary_password(length=10)
+                try:
+                    update_master_password(
+                        doctor_id=ident.doctor_id,
+                        role=ident.role,
+                        new_raw_password=tmp,
+                    )
+                    password_to_send = tmp
+                except Exception:
+                    # If we cannot update the master DB, do not expose details.
+                    password_to_send = None
+
+            if password_to_send:
+                body_lines = [
+                    f"Hello {greeting_name},",
+                    "",
+                    "Your CPD in Clinic portal login password is:",
+                    password_to_send,
+                    "",
+                    "Login link:",
+                    _build_absolute_url(reverse("accounts:login")),
+                    "",
+                    "Thank you.",
+                ]
+                send_email_via_sendgrid(
+                    subject=email_subject,
+                    to_emails=[email],
+                    plain_text_content="\\n".join(body_lines),
+                )
+
+            # Always return a generic response (avoid account enumeration)
+            messages.success(
+                request,
+                "If the email exists in our system, an email has been sent.",
+            )
+            return redirect("accounts:login")
+
+        # 2) Fallback: existing portal user reset-link (publisher/staff)
         user = User.objects.filter(email=email).first()
         if user:
             _send_password_reset_email(user)
+
         messages.success(
             request,
-            "If the email exists in our system, a password reset link has been sent.",
+            "If the email exists in our system, an email has been sent.",
         )
         return redirect("accounts:login")
 
     return render(request, "accounts/request_password_reset.html")
+
 
 
 def password_reset(request, uidb64: str, token: str):

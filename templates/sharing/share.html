@@ -1171,7 +1171,8 @@ shareVideoBtn.onclick = () => {
   if (!activeVideo) return;
   const lang = langSel.value;
   const title = videoTitle(activeVideo, lang) || activeVideo.id;
-  const link = `${location.origin}/p/${catalog.doctor_id}/v/${activeVideo.id}/?lang=${lang}`;
+  const payload = catalog.doctor_payload ? `&d=${encodeURIComponent(catalog.doctor_payload)}` : "";
+  const link = `${location.origin}/p/${catalog.doctor_id}/v/${activeVideo.id}/?lang=${lang}${payload}`;
   shareToWhatsApp(buildMessage(title, link, lang));
 };
 
@@ -1180,7 +1181,8 @@ shareBundleBtn.onclick = () => {
   if (!bundle) return;
   const lang = langSel.value;
   const title = bundleLabelByCode(bundle, lang) || bundle;
-  const link = `${location.origin}/p/${catalog.doctor_id}/c/${bundle}/?lang=${lang}`;
+  const payload = catalog.doctor_payload ? `&d=${encodeURIComponent(catalog.doctor_payload)}` : "";
+  const link = `${location.origin}/p/${catalog.doctor_id}/c/${bundle}/?lang=${lang}${payload}`;
   shareToWhatsApp(buildMessage(title, link, lang));
 };
 
