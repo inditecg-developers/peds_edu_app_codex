@@ -12,6 +12,10 @@ from django.db import connections, IntegrityError
 
 import secrets
 
+from django.contrib.auth.hashers import make_password
+from django.utils import timezone
+
+from .models import RedflagsDoctor
 from django.db import transaction
 from django.db.models import Q
 
@@ -914,6 +918,12 @@ def generate_doctor_id(prefix: str = "DR", max_tries: int = 200) -> str:
 
 
 
+
+def generate_temporary_password(length: int = 10) -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    return "".join(secrets.choice(alphabet) for _ in range(max(8, int(length))))
+
+
 def create_doctor_with_enrollment(
     *,
     doctor_id: str,
@@ -964,6 +974,11 @@ def create_doctor_with_enrollment(
     recruited_via = (recruited_via or "SELF").strip()
     field_rep_id = (registered_by or "").strip()
 
+    initial_password_raw: Optional[str] = None,
+
+    pwd_hash = make_password(initial_password_raw) if initial_password_raw else ""
+    pwd_set_at = timezone.now() if initial_password_raw else None
+
     with transaction.atomic(using=alias):
         try:
             RedflagsDoctor.objects.using(alias).create(
@@ -983,12 +998,15 @@ def create_doctor_with_enrollment(
                 district=district,
 
                 imc_registration_number=imc_number,
-
                 receptionist_whatsapp_number="",
                 photo=photo_path or "",
 
                 field_rep_id=field_rep_id,
                 recruited_via=recruited_via,
+
+                # NEW: initial login password in MASTER DB
+                clinic_password_hash=pwd_hash,
+                clinic_password_set_at=pwd_set_at,
             )
         except IntegrityError:
             # Race/duplicate case: treat as OK only if it already exists by email/whatsapp
@@ -1004,4 +1022,3 @@ def create_doctor_with_enrollment(
                 campaign_id=campaign_id,
                 registered_by=field_rep_id,
             )
-

@@ -423,33 +423,48 @@ def register_doctor(request):
         district=district,
     )
 
+    temp_password = master_db.generate_temporary_password(length=10)
+
     try:
         master_db.create_doctor_with_enrollment(
             doctor_id=doctor_id,
             first_name=cd["first_name"].strip(),
-            last_name=cd.get("last_name", "").strip(),
+            last_name=(cd.get("last_name") or "").strip(),
             email=email,
             whatsapp=whatsapp,
 
             clinic_name=cd["clinic_name"].strip(),
 
-            # If you don't have a separate clinic_phone field in the form,
-            # use appointment number for both.
             clinic_phone=cd["clinic_appointment_number"].strip(),
             clinic_appointment_number=cd["clinic_appointment_number"].strip(),
 
             clinic_address=cd["clinic_address"].strip(),
             imc_number=cd["imc_registration_number"].strip(),
             postal_code=cd["postal_code"].strip(),
-
             state=(cd.get("state") or "").strip() or "Maharashtra",
             district=(cd.get("district") or "").strip(),
-
             photo_path=photo_path,
+
             campaign_id=campaign_id or None,
             recruited_via=recruited_via,
             registered_by=field_rep_id or None,
+
+            # NEW
+            initial_password_raw=temp_password,
         )
+
+        try:
+            ok = _send_master_doctor_access_email(
+                doctor_id=doctor_id,
+                to_email=email,
+                first_name=cd["first_name"].strip(),
+                last_name=(cd.get("last_name") or "").strip(),
+                temp_password=temp_password,
+            )
+            _log("doctor_register.email_master_sent", request_id=request_id, doctor_id=doctor_id, ok=ok)
+        except Exception:
+            _log_exception("doctor_register.email_master_exception", request_id=request_id, doctor_id=doctor_id)
+
 
         _log(
             "doctor_register.master_create_ok",
@@ -467,41 +482,41 @@ def register_doctor(request):
     # --------------------------------------------------
     # 3) FETCH PORTAL DoctorProfile & SEND LINKS
     # --------------------------------------------------
-    doctor = DoctorProfile.objects.filter(doctor_id=doctor_id).select_related("user").first()
-    _log(
-        "doctor_register.portal_doctorprofile_postcreate",
-        request_id=request_id,
-        doctor_id=doctor_id,
-        found=bool(doctor),
-    )
-
-    if doctor:
-        try:
-            sent = _send_doctor_links_email(
-                doctor,
-                campaign_id=campaign_id or None,
-                password_setup=True,
-            )
-            _log(
-                "doctor_register.email_sent_new",
-                request_id=request_id,
-                doctor_id=doctor_id,
-                sent=bool(sent),
-            )
-        except Exception:
-            _log_exception(
-                "doctor_register.email_exception_new",
-                request_id=request_id,
-                doctor_id=doctor_id,
-            )
-    else:
-        _log(
-            "doctor_register.warning_no_portal_profile_after_master_create",
-            request_id=request_id,
-            level="warning",
-            doctor_id=doctor_id,
-            note="Created in master DB, but DoctorProfile not found in portal DB. Email not sent.",
-        )
+    # doctor = DoctorProfile.objects.filter(doctor_id=doctor_id).select_related("user").first()
+    # _log(
+    #     "doctor_register.portal_doctorprofile_postcreate",
+    #     request_id=request_id,
+    #     doctor_id=doctor_id,
+    #     found=bool(doctor),
+    # )
+    #
+    # if doctor:
+    #     try:
+    #         sent = _send_doctor_links_email(
+    #             doctor,
+    #             campaign_id=campaign_id or None,
+    #             password_setup=True,
+    #         )
+    #         _log(
+    #             "doctor_register.email_sent_new",
+    #             request_id=request_id,
+    #             doctor_id=doctor_id,
+    #             sent=bool(sent),
+    #         )
+    #     except Exception:
+    #         _log_exception(
+    #             "doctor_register.email_exception_new",
+    #             request_id=request_id,
+    #             doctor_id=doctor_id,
+    #         )
+    # else:
+    #     _log(
+    #         "doctor_register.warning_no_portal_profile_after_master_create",
+    #         request_id=request_id,
+    #         level="warning",
+    #         doctor_id=doctor_id,
+    #         note="Created in master DB, but DoctorProfile not found in portal DB. Email not sent.",
+    #     )
 
     _log(
         "doctor_register.exit_success",
@@ -862,3 +877,55 @@ def password_reset(request, uidb64: str, token: str):
         form = DoctorSetPasswordForm(user=user)
 
     return render(request, "accounts/password_reset.html", {"form": form})
+
+
+def _send_master_doctor_access_email(
+    *,
+    doctor_id: str,
+    to_email: str,
+    first_name: str,
+    last_name: str,
+    temp_password: str | None,
+) -> bool:
+    full_name = (f"{first_name} {last_name}".strip()) or to_email
+
+    clinic_link = _build_absolute_url(reverse("sharing:doctor_share", args=[doctor_id]))
+    login_link = _build_absolute_url(reverse("accounts:login"))
+
+    body_lines = [
+        f"Hello {full_name},",
+        "",
+        "Your CPD in Clinic portal account has been created.",
+        "",
+        f"Doctor ID: {doctor_id}",
+        f"Login link: {login_link}",
+        f"Clinic sharing link: {clinic_link}",
+        "",
+        f"Username: {to_email}",
+    ]
+
+    if temp_password:
+        body_lines.extend(
+            [
+                f"Temporary password: {temp_password}",
+                "",
+                "If you have trouble logging in later, use the 'Forgot Password' link on the login page.",
+            ]
+        )
+    else:
+        body_lines.extend(
+            [
+                "",
+                "Password: (not included)",
+                "Use the 'Forgot Password' link on the login page to set/reset your password.",
+            ]
+        )
+
+    body_lines.append("")
+    body_lines.append("Thank you.")
+
+    return send_email_via_sendgrid(
+        subject="CPD in Clinic portal access",
+        to_emails=[to_email],
+        plain_text_content="\n".join(body_lines),
+    )
