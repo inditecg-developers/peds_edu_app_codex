@@ -172,3 +172,61 @@ class DoctorProfile(models.Model):
 
     def __str__(self):
         return f"{self.user.email} ({self.doctor_id})"
+
+
+
+
+# ---------------------------------------------------------------------
+# MASTER DB (healthcare_forms): redflags_doctor (UNMANAGED)
+# ---------------------------------------------------------------------
+
+class RedflagsDoctor(models.Model):
+    doctor_id = models.CharField(max_length=8, primary_key=True)
+
+    first_name = models.CharField(max_length=100)
+    last_name = models.CharField(max_length=100, blank=True, default="")
+
+    email = models.EmailField()
+    whatsapp_no = models.CharField(max_length=20, blank=True, default="")
+
+    clinic_name = models.CharField(max_length=100, blank=True, default="")
+    clinic_phone = models.CharField(max_length=20, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    imc_registration_number = models.CharField(max_length=20, blank=False, default="")
+    clinic_appointment_number = models.CharField(max_length=10, blank=False, default="")
+
+    clinic_address = models.CharField(max_length=300, blank=False, default="")
+    postal_code = models.CharField(max_length=6, blank=False, default="")
+
+    state = models.CharField(max_length=64, blank=False, default="Maharashtra")
+    district = models.CharField(max_length=100, blank=False, default="")
+
+    receptionist_whatsapp_number = models.CharField(max_length=10, blank=True, default="")
+    photo = models.CharField(max_length=255, blank=True, default="")  # stores path/filename
+
+    # Optional linkage fields (keep nullable to avoid NOT NULL issues)
+    partner_id = models.BigIntegerField(null=True, blank=True)
+
+    field_rep_id = models.CharField(max_length=64, blank=True, default="")
+    recruited_via = models.CharField(max_length=12, blank=True, default="SELF")
+
+    # Optional auth columns
+    clinic_password_hash = models.CharField(max_length=128, blank=True, default="")
+    clinic_password_set_at = models.DateTimeField(null=True, blank=True)
+
+    clinic_user1_name = models.CharField(max_length=120, blank=True, default="")
+    clinic_user1_email = models.EmailField(blank=True, default="")
+    clinic_user1_password_hash = models.CharField(max_length=128, blank=True, default="")
+
+    clinic_user2_name = models.CharField(max_length=120, blank=True, default="")
+    clinic_user2_email = models.EmailField(blank=True, default="")
+    clinic_user2_password_hash = models.CharField(max_length=128, blank=True, default="")
+
+    class Meta:
+        managed = False
+        db_table = "redflags_doctor"
+
+    def __str__(self):
+        return (f"{self.first_name} {self.last_name}".strip()) or self.doctor_id

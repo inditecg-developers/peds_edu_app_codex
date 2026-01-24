@@ -10,6 +10,13 @@ from urllib.parse import quote
 from django.conf import settings
 from django.db import connections, IntegrityError
 
+import secrets
+
+from django.db import transaction
+from django.db.models import Q
+
+from .models import RedflagsDoctor
+
 
 import logging
 
@@ -237,15 +244,9 @@ def doctor_id_exists(doctor_id: str) -> bool:
     did = (doctor_id or "").strip()
     if not did:
         return False
+    alias = master_alias()
+    return RedflagsDoctor.objects.using(alias).filter(doctor_id=did).exists()
 
-    conn = get_master_connection()
-    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "redflags_doctor")
-    id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
-
-    sql = f"SELECT 1 FROM {qn(table)} WHERE {qn(id_col)} = %s LIMIT 1"
-    with conn.cursor() as cur:
-        cur.execute(sql, [did])
-        return cur.fetchone() is not None
 
 
 
@@ -835,113 +836,82 @@ def resolve_field_rep_for_campaign(*, campaign_id: str, field_rep_identifier: st
 
 
 def find_doctor_by_email_or_whatsapp(*, email: str, whatsapp: str) -> Optional[MasterDoctor]:
-    """
-    Find existing doctor in MASTER DB by email OR WhatsApp.
-    """
-
     email_n = (email or "").strip().lower()
-    wa_n = normalize_wa_for_lookup(whatsapp)
+    wa_raw = (whatsapp or "").strip()
 
-    _log_db(
-        "master_db.doctor.lookup.start",
-        email=_mask_email_for_log(email_n),
-        whatsapp=_mask_phone_for_log(wa_n),
-    )
+    # Use your existing normalization helper
+    wa_n = normalize_wa_for_lookup(wa_raw)
 
     if not email_n and not wa_n:
-        _log_db(
-            "master_db.doctor.lookup.no_input",
-            level="warning",
-        )
         return None
 
-    conn = None
-    row = None
+    alias = master_alias()
 
-    try:
-        conn = get_master_connection()
-        table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "redflags_doctor")
+    q = Q()
+    if email_n:
+        q |= Q(email__iexact=email_n)
 
-        id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
-        fn_col = getattr(settings, "MASTER_DB_DOCTOR_FIRST_NAME_COLUMN", "first_name")
-        ln_col = getattr(settings, "MASTER_DB_DOCTOR_LAST_NAME_COLUMN", "last_name")
-        email_col = getattr(settings, "MASTER_DB_DOCTOR_EMAIL_COLUMN", "email")
-        wa_col = getattr(settings, "MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no")
+    # WhatsApp can be stored with/without country code; include a few candidates
+    if wa_n:
+        candidates = []
+        seen = set()
 
-        where = []
-        vals = []
+        def _add(x: str) -> None:
+            x = (x or "").strip()
+            if x and x not in seen:
+                seen.add(x)
+                candidates.append(x)
 
-        if email_n:
-            where.append(f"LOWER({qn(email_col)}) = LOWER(%s)")
-            vals.append(email_n)
+        base10 = wa_n
+        if len(base10) == 12 and base10.startswith("91"):
+            base10 = base10[2:]
+        elif len(base10) == 11 and base10.startswith("0"):
+            base10 = base10[1:]
+        elif len(base10) > 10:
+            base10 = base10[-10:]
 
-        if wa_n:
-            where.append(f"{qn(wa_col)} = %s")
-            vals.append(wa_n)
+        _add(base10)
+        _add("91" + base10)
+        _add("+91" + base10)
+        _add("0" + base10)
+        _add(wa_n)
 
-        sql = (
-            f"SELECT {qn(id_col)}, {qn(fn_col)}, {qn(ln_col)}, {qn(email_col)}, {qn(wa_col)} "
-            f"FROM {qn(table)} "
-            f"WHERE {' OR '.join(where)} "
-            f"LIMIT 1"
-        )
+        q |= Q(whatsapp_no__in=candidates)
 
-        _log_db(
-            "master_db.doctor.lookup.query",
-            table=table,
-            where=" OR ".join(where),
-        )
-
-        with conn.cursor() as cur:
-            cur.execute(sql, vals)
-            row = cur.fetchone()
-
-    except Exception:
-        _log_db_exc(
-            "master_db.doctor.lookup.exception",
-            email=_mask_email_for_log(email_n),
-            whatsapp=_mask_phone_for_log(wa_n),
-        )
-        raise
-
-    if not row:
-        _log_db(
-            "master_db.doctor.lookup.none",
-            email=_mask_email_for_log(email_n),
-            whatsapp=_mask_phone_for_log(wa_n),
-        )
+    obj = (
+        RedflagsDoctor.objects.using(alias)
+        .filter(q)
+        .only("doctor_id", "first_name", "last_name", "email", "whatsapp_no")
+        .first()
+    )
+    if not obj:
         return None
 
-    doctor = MasterDoctor(
-        doctor_id=str(row[0] or "").strip(),
-        first_name=str(row[1] or "").strip(),
-        last_name=str(row[2] or "").strip(),
-        email=str(row[3] or "").strip(),
-        whatsapp_no=str(row[4] or "").strip(),
+    return MasterDoctor(
+        doctor_id=str(obj.doctor_id or "").strip(),
+        first_name=str(obj.first_name or "").strip(),
+        last_name=str(obj.last_name or "").strip(),
+        email=str(obj.email or "").strip(),
+        whatsapp_no=str(obj.whatsapp_no or "").strip(),
     )
 
-    _log_db(
-        "master_db.doctor.lookup.found",
-        doctor_id=doctor.doctor_id,
-        email=_mask_email_for_log(doctor.email),
-        whatsapp=_mask_phone_for_log(doctor.whatsapp_no),
-    )
-
-    return doctor
 
 
-def generate_doctor_id(prefix: str = "DR", max_tries: int = 10) -> str:
-    """
-    Generate a unique doctor_id for MASTER DB.
-    Example: DR1706012345
-    """
+def generate_doctor_id(prefix: str = "DR", max_tries: int = 200) -> str:
+    prefix = (prefix or "DR").upper().strip()
+    suffix_len = 8 - len(prefix)
+    if suffix_len <= 0:
+        raise ValueError("generate_doctor_id: prefix too long for an 8-char doctor_id")
+
+    digits = "0123456789"
+
     for _ in range(max_tries):
-        did = f"{prefix}{int(time.time() * 1000)}"
+        did = prefix + "".join(secrets.choice(digits) for _ in range(suffix_len))
         if not doctor_id_exists(did):
             return did
-        time.sleep(0.01)
 
     raise RuntimeError("Unable to generate unique doctor_id in MASTER DB")
+
 
 
 def create_doctor_with_enrollment(
@@ -966,49 +936,72 @@ def create_doctor_with_enrollment(
 ) -> None:
     """
     Atomically:
-      1) Insert doctor into MASTER DB
+      1) Insert doctor into MASTER DB using ORM (redflags_doctor)
       2) Ensure campaign enrollment (if campaign_id provided)
 
-    This is the ONLY function register_doctor should call.
+    IMPORTANT: no silent IntegrityError swallowing.
     """
 
-    conn = get_master_connection()
+    alias = master_alias()
 
-    with conn.cursor() as cur:
+    email_n = (email or "").strip().lower()
+    wa_n = normalize_wa_for_lookup(whatsapp) or (whatsapp or "").strip()
+
+    # Fill basics defensively
+    first_name = (first_name or "").strip()
+    last_name = (last_name or "").strip()
+
+    clinic_name = (clinic_name or "").strip()
+    clinic_phone = (clinic_phone or "").strip()
+    clinic_appointment_number = (clinic_appointment_number or "").strip()
+
+    clinic_address = (clinic_address or "").strip()
+    imc_number = (imc_number or "").strip()
+    postal_code = (postal_code or "").strip()
+    state = (state or "Maharashtra").strip()
+    district = (district or "").strip()
+
+    recruited_via = (recruited_via or "SELF").strip()
+    field_rep_id = (registered_by or "").strip()
+
+    with transaction.atomic(using=alias):
         try:
-            # -------------------------
-            # Insert doctor
-            # -------------------------
-            insert_doctor_row(
+            RedflagsDoctor.objects.using(alias).create(
                 doctor_id=doctor_id,
                 first_name=first_name,
                 last_name=last_name,
-                email=email,
+                email=email_n,
+                whatsapp_no=wa_n,
+
                 clinic_name=clinic_name,
-                imc_registration_number=imc_number,
                 clinic_phone=clinic_phone,
                 clinic_appointment_number=clinic_appointment_number,
+
                 clinic_address=clinic_address,
                 postal_code=postal_code,
                 state=state,
                 district=district,
-                whatsapp_no=whatsapp,
+
+                imc_registration_number=imc_number,
+
                 receptionist_whatsapp_number="",
-                photo_path=photo_path,
-                field_rep_id=registered_by or "",
+                photo=photo_path or "",
+
+                field_rep_id=field_rep_id,
                 recruited_via=recruited_via,
             )
-
-            # -------------------------
-            # Campaign enrollment
-            # -------------------------
-            if campaign_id:
-                ensure_enrollment(
-                    doctor_id=doctor_id,
-                    campaign_id=campaign_id,
-                    registered_by=registered_by or "",
-                )
-
         except IntegrityError:
-            # Doctor already exists (race / retry case)
-            pass
+            # Race/duplicate case: treat as OK only if it already exists by email/whatsapp
+            existing = find_doctor_by_email_or_whatsapp(email=email_n, whatsapp=wa_n)
+            if existing:
+                return
+            # Otherwise, it is a real insert failure; raise it.
+            raise
+
+        if campaign_id:
+            ensure_enrollment(
+                doctor_id=doctor_id,
+                campaign_id=campaign_id,
+                registered_by=field_rep_id,
+            )
+

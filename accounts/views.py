@@ -426,22 +426,31 @@ def register_doctor(request):
     try:
         master_db.create_doctor_with_enrollment(
             doctor_id=doctor_id,
-            first_name=(cd.get("first_name") or "").strip(),
-            last_name=(cd.get("last_name") or "").strip(),
+            first_name=cd["first_name"].strip(),
+            last_name=cd.get("last_name", "").strip(),
             email=email,
             whatsapp=whatsapp,
-            clinic_name=(cd.get("clinic_name") or "").strip(),
-            clinic_phone=(cd.get("clinic_appointment_number") or "").strip(),
-            clinic_address=(cd.get("clinic_address") or "").strip(),
-            imc_number=(cd.get("imc_registration_number") or "").strip(),
-            postal_code=(cd.get("postal_code") or "").strip(),
-            state=state or None,
-            district=district or None,
+
+            clinic_name=cd["clinic_name"].strip(),
+
+            # If you don't have a separate clinic_phone field in the form,
+            # use appointment number for both.
+            clinic_phone=cd["clinic_appointment_number"].strip(),
+            clinic_appointment_number=cd["clinic_appointment_number"].strip(),
+
+            clinic_address=cd["clinic_address"].strip(),
+            imc_number=cd["imc_registration_number"].strip(),
+            postal_code=cd["postal_code"].strip(),
+
+            state=(cd.get("state") or "").strip() or "Maharashtra",
+            district=(cd.get("district") or "").strip(),
+
             photo_path=photo_path,
             campaign_id=campaign_id or None,
             recruited_via=recruited_via,
             registered_by=field_rep_id or None,
         )
+
         _log(
             "doctor_register.master_create_ok",
             request_id=request_id,
