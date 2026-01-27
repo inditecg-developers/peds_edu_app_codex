@@ -21,7 +21,9 @@ from peds_edu.master_db import (
     build_patient_link_payload,
     sign_patient_payload,
     unsign_patient_payload,
+    fetch_pe_campaign_support_for_doctor_email,
 )
+
 
 
 from .services import build_whatsapp_message_prefixes, get_catalog_json_cached
@@ -60,6 +62,13 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
     # Build template-friendly dicts
     doctor_ctx, clinic_ctx = master_row_to_template_context(row)
     doctor_name = ((doctor_ctx.get("user") or {}).get("full_name") or "").strip()
+        # NEW: campaign acknowledgements + banners (system_pe campaigns only)
+    doctor_email = ((doctor_ctx.get("user") or {}).get("email") or "").strip()
+    try:
+        pe_campaign_support = fetch_pe_campaign_support_for_doctor_email(doctor_email)
+    except Exception:
+        pe_campaign_support = []
+
 
     # Force refresh once to avoid stale cache during development.
     catalog_json = get_catalog_json_cached(force_refresh=True)
@@ -91,6 +100,7 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
             "languages": LANGUAGES,
             # Hide "Modify Clinic Details" when using master DB (optional template change below)
             "show_modify_clinic_details": False,
+            "pe_campaign_support": pe_campaign_support,
         },
     )
 
