@@ -347,6 +347,49 @@
     border-top: 1px solid var(--border);
     text-align: center;
   }
+    /* --- Campaign support acknowledgements & banners (system_pe) --- */
+  .campaign-support {
+    margin-top: 28px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+  }
+
+  .campaign-support .ack-line {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 6px 0;
+    line-height: 1.35;
+  }
+
+  .campaign-support .banner-list {
+    margin-top: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .campaign-support .banner-link {
+    display: block;
+    text-decoration: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--surface);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+
+  .campaign-support .banner-link:hover {
+    border-color: var(--primary);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+  }
+
+  .campaign-support .banner-link img {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
 
   /* Mobile Optimizations */
   @media (max-width: 640px) {
@@ -479,11 +522,20 @@
 
   <div class="profile-row">
     <div class="avatar" aria-label="Doctor photo">
-      <div class="avatar-letter">{{ doctor.user.full_name|default:"D"|slice:":1"|upper }}</div>
+      <div class="avatar-letter">
+        {{ doctor.user.full_name|default:"D"|slice:":1"|upper }}
+      </div>
       {% if doctor.photo %}
-        <img class="avatar-img" src="{{ doctor.photo.url }}" alt="Doctor photo" loading="lazy" onerror="this.remove();" />
+        <img
+          class="avatar-img"
+          src="{{ doctor.photo.url }}"
+          alt="Doctor photo"
+          loading="lazy"
+          onerror="this.remove();"
+        />
       {% endif %}
     </div>
+
     <div class="profile-info">
       <div class="profile-name">Dr. {{ doctor.user.full_name }}</div>
       <div class="profile-subtitle">{{ doctor.clinic.display_name }}</div>
@@ -496,26 +548,37 @@
       <div class="kv-label">Doctor WhatsApp</div>
       <div class="kv-value">{{ doctor.whatsapp_number }}</div>
     </div>
+
     <div class="kv-item">
       <div class="kv-label">IMC / Reg.</div>
       <div class="kv-value">{{ doctor.imc_number }}</div>
     </div>
+
     <div class="kv-item">
       <div class="kv-label">Clinic Phone</div>
       <div class="kv-value">{{ doctor.clinic.clinic_phone }}</div>
     </div>
+
     {% if doctor.clinic.clinic_whatsapp_number %}
-    <div class="kv-item">
-      <div class="kv-label">Clinic WhatsApp</div>
-      <div class="kv-value">{{ doctor.clinic.clinic_whatsapp_number }}</div>
-    </div>
+      <div class="kv-item">
+        <div class="kv-label">Clinic WhatsApp</div>
+        <div class="kv-value">
+          {{ doctor.clinic.clinic_whatsapp_number }}
+        </div>
+      </div>
     {% endif %}
   </div>
 
-  <div class="muted" style="margin-top: 16px; padding: 16px; background: var(--surface-2); border-radius: var(--radius-sm);">
-    <strong>Address:</strong><br>
-    {{ doctor.clinic.address_text|linebreaksbr }}<br>
-    {{ doctor.clinic.state }}{% if doctor.clinic.postal_code %} — {{ doctor.clinic.postal_code }}{% endif %}
+  <div
+    class="muted"
+    style="margin-top: 16px; padding: 16px; background: var(--surface-2); border-radius: var(--radius-sm);"
+  >
+    <strong>Address:</strong><br />
+    {{ doctor.clinic.address_text|linebreaksbr }}<br />
+    {{ doctor.clinic.state }}
+    {% if doctor.clinic.postal_code %}
+      — {{ doctor.clinic.postal_code }}
+    {% endif %}
   </div>
 </div>
 
@@ -543,7 +606,12 @@
     <div class="grow">
       <label for="searchBox">Search Bundles / Videos</label>
       <div class="search-wrapper">
-        <input id="searchBox" type="text" placeholder="Search by title, keyword, trigger, bundle name…" autocomplete="off" />
+        <input
+          id="searchBox"
+          type="text"
+          placeholder="Search by title, keyword, trigger, bundle name…"
+          autocomplete="off"
+        />
       </div>
     </div>
 
@@ -561,6 +629,7 @@
 
   <div class="video-list-container">
     <div id="videoList" class="video-list"></div>
+
     <div id="emptyState" class="empty-state" style="display: none;">
       <div class="empty-state-icon">📹</div>
       <p>No bundles/videos found for the current filters.</p>
@@ -569,43 +638,126 @@
   </div>
 
   <div class="share-section">
-    <h4 style="margin-bottom: 20px; color: var(--text);">Share with Patient</h4>
+    <h4 style="margin-bottom: 20px; color: var(--text);">
+      Share with Patient
+    </h4>
 
     <div class="input-group">
       <label for="waNumber">Patient WhatsApp Number</label>
-      <input id="waNumber" type="tel" maxlength="10" placeholder="Enter 10-digit WhatsApp number" inputmode="numeric" />
-      <div class="hint">Enter the patient's 10-digit WhatsApp number (India).</div>
+      <input
+        id="waNumber"
+        type="tel"
+        maxlength="10"
+        placeholder="Enter 10-digit WhatsApp number"
+        inputmode="numeric"
+      />
+      <div class="hint">
+        Enter the patient's 10-digit WhatsApp number (India).
+      </div>
     </div>
 
     <div class="actions-grid">
       <div class="action-card" id="videoCard" style="display: none;">
         <div class="action-icon">🎬</div>
         <div class="action-title">Share Single Video</div>
-        <div class="action-description">Share only the selected video</div>
-        <button class="btn" id="shareVideoBtn" style="margin-top: 12px; width: 100%;">Share Video</button>
+        <div class="action-description">
+          Share only the selected video
+        </div>
+        <button
+          class="btn"
+          id="shareVideoBtn"
+          style="margin-top: 12px; width: 100%;"
+        >
+          Share Video
+        </button>
       </div>
 
       <div class="action-card" id="bundleCard" style="display: none;">
         <div class="action-icon">📦</div>
         <div class="action-title">Share Complete Bundle</div>
-        <div class="action-description">Share all videos in this bundle</div>
-        <button class="btn" id="shareBundleBtn" style="margin-top: 12px; width: 100%;">Share Bundle</button>
+        <div class="action-description">
+          Share all videos in this bundle
+        </div>
+        <button
+          class="btn"
+          id="shareBundleBtn"
+          style="margin-top: 12px; width: 100%;"
+        >
+          Share Bundle
+        </button>
       </div>
     </div>
 
     <div class="hint" style="margin-top: 20px; text-align: center;">
-      <strong>Tip:</strong> Select a bundle to list its videos. Click a video to share only that video.
+      <strong>Tip:</strong>
+      Select a bundle to list its videos. Click a video to share only that
+      video.
     </div>
   </div>
 
-  <div class="prominent-footer">
-    <a class="btn btn-secondary" href="{% url 'accounts:modify_clinic_details' doctor_id=doctor.doctor_id %}" style="width: 100%; max-width: 300px;">
-      Modify Clinic Details
-    </a>
-  </div>
+  {# NEW: Campaign acknowledgements + banners for system_pe campaigns #}
+  {% if pe_campaign_support %}
+    <div class="campaign-support">
+      {% for c in pe_campaign_support %}
+        <div class="ack-line">
+          {{ c.video_cluster }} for your clinic is supported by {{ c.brand }}
+        </div>
+      {% endfor %}
+
+      <div class="banner-list">
+        {% for c in pe_campaign_support %}
+          {% if c.banner_target_url and (c.banner_large_url or c.banner_small_url) %}
+            <a
+              class="banner-link"
+              href="{{ c.banner_target_url }}"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <picture>
+                {% if c.banner_small_url %}
+                  <source
+                    media="(max-width: 640px)"
+                    srcset="{{ c.banner_small_url }}"
+                  />
+                {% endif %}
+
+                {% if c.banner_large_url %}
+                  <img
+                    src="{{ c.banner_large_url }}"
+                    alt="{{ c.brand }} banner"
+                    loading="lazy"
+                  />
+                {% else %}
+                  <img
+                    src="{{ c.banner_small_url }}"
+                    alt="{{ c.brand }} banner"
+                    loading="lazy"
+                  />
+                {% endif %}
+              </picture>
+            </a>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {# OPTIONAL FIX (recommended): only show modify button when requested by view #}
+  {% if show_modify_clinic_details %}
+    <div class="prominent-footer">
+      <a
+        class="btn btn-secondary"
+        href="{% url 'accounts:modify_clinic_details' doctor_id=doctor.doctor_id %}"
+        style="width: 100%; max-width: 300px;"
+      >
+        Modify Clinic Details
+      </a>
+    </div>
+  {% endif %}
 </div>
 
 {{ catalog_json|json_script:"catalog-json" }}
+
 
 <script>
 const catalog = JSON.parse(document.getElementById("catalog-json").textContent);
