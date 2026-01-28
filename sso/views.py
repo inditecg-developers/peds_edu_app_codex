@@ -181,6 +181,8 @@ def consume(request):
         "roles": roles,
         "iss": payload.get("iss"),
         "aud": payload.get("aud"),
+        "email": (payload.get("email") or "").strip(),
+        "publisher_email": (payload.get("publisher_email") or "").strip(),
     }
     request.session[getattr(settings, "SSO_SESSION_KEY_CAMPAIGN", "campaign_id")] = str(
         campaign_id_value
