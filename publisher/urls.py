@@ -1,6 +1,6 @@
 from django.urls import path
 from . import views
-
+from . import publisher_views
 app_name = "publisher"
 
 urlpatterns = [
@@ -15,7 +15,7 @@ urlpatterns = [
     path("trigger-clusters/", views.trigger_cluster_list, name="triggercluster_list"),
     path("trigger-clusters/new/", views.trigger_cluster_create, name="triggercluster_create"),
     path("trigger-clusters/<int:pk>/", views.trigger_cluster_edit, name="triggercluster_edit"),
-
+    path('debug-session/', publisher_views.debug_session, name='debug_session'),
     # Triggers
     path("triggers/", views.trigger_list, name="trigger_list"),
     path("triggers/new/", views.trigger_create, name="trigger_create"),
