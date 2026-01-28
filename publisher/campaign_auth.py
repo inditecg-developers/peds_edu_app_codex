@@ -45,12 +45,13 @@ def _normalize_roles(value: Any) -> Sequence[str]:
 
 
 def _extract_token(request: HttpRequest) -> Optional[str]:
-    # NOTE: consume() supports sso_token; keep decorator consistent.
     token = (
         request.GET.get("token")
         or request.GET.get("sso_token")
         or request.GET.get("jwt")
         or request.GET.get("access_token")
+        or request.GET.get("jwt_token")     # NEW
+        or request.GET.get("id_token")      # NEW (if Project1 uses this)
     )
     if token:
         return token.strip()
@@ -58,7 +59,6 @@ def _extract_token(request: HttpRequest) -> Optional[str]:
     auth = (request.META.get("HTTP_AUTHORIZATION") or "").strip()
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
-
     return None
 
 
