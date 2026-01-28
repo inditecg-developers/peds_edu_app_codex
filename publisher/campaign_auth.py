@@ -1,3 +1,5 @@
+# publisher/campaign_auth.py
+
 from __future__ import annotations
 
 from functools import wraps
@@ -8,6 +10,12 @@ from django.conf import settings
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect
 
+import time
+import json
+import uuid
+
+from accounts import master_db
+
 # Part-C session keys (Project2)
 SESSION_KEY = getattr(settings, "SSO_SESSION_KEY_IDENTITY", "sso_identity")
 SESSION_CAMPAIGN_KEY = getattr(settings, "SSO_SESSION_KEY_CAMPAIGN", "campaign_id")
@@ -16,9 +24,16 @@ SESSION_CAMPAIGN_KEY = getattr(settings, "SSO_SESSION_KEY_CAMPAIGN", "campaign_i
 LEGACY_SESSION_KEY = "publisher_jwt_claims"
 LEGACY_CAMPAIGN_KEY = "publisher_current_campaign_id"
 
+SESSION_PUBLISHER_MASTER_VALIDATION = "publisher_master_validation"
+PUBLISHER_MASTER_VALIDATION_TTL_SECONDS = getattr(settings, "PUBLISHER_MASTER_VALIDATION_TTL_SECONDS", 300)
+
 
 def unauthorized_response() -> HttpResponse:
     return HttpResponse("unauthorised access", status=401, content_type="text/plain")
+
+
+def _debug_enabled(request: HttpRequest) -> bool:
+    return (request.GET.get("debug_sso") or "").strip() == "1"
 
 
 def _normalize_roles(value: Any) -> Sequence[str]:
@@ -30,8 +45,10 @@ def _normalize_roles(value: Any) -> Sequence[str]:
 
 
 def _extract_token(request: HttpRequest) -> Optional[str]:
+    # NOTE: consume() supports sso_token; keep decorator consistent.
     token = (
         request.GET.get("token")
+        or request.GET.get("sso_token")
         or request.GET.get("jwt")
         or request.GET.get("access_token")
     )
@@ -45,18 +62,7 @@ def _extract_token(request: HttpRequest) -> Optional[str]:
     return None
 
 
-import time
-from accounts import master_db
-
-SESSION_PUBLISHER_MASTER_VALIDATION = "publisher_master_validation"
-PUBLISHER_MASTER_VALIDATION_TTL_SECONDS = getattr(settings, "PUBLISHER_MASTER_VALIDATION_TTL_SECONDS", 300)
-
-
 def _extract_email_from_claims(ident: Dict[str, Any]) -> str:
-    """
-    We must map JWT claims to the AuthorizedPublisher.email in master DB.
-    Prefer ident['email'] if present, else fallback to ident['username'] if it looks like an email.
-    """
     email = (ident.get("email") or "").strip().lower()
     if email and "@" in email:
         return email
@@ -65,8 +71,6 @@ def _extract_email_from_claims(ident: Dict[str, Any]) -> str:
     if username and "@" in username:
         return username
 
-    # If your tokens carry publisher email in a different claim, add it here:
-    # e.g. ident.get("publisher_email")
     other = (ident.get("publisher_email") or "").strip().lower()
     if other and "@" in other:
         return other
@@ -75,9 +79,6 @@ def _extract_email_from_claims(ident: Dict[str, Any]) -> str:
 
 
 def _is_publisher_authorized_in_master(request: HttpRequest, email: str) -> bool:
-    """
-    Cached check (session cache for 5 minutes default).
-    """
     if not email:
         return False
 
@@ -132,7 +133,6 @@ def get_publisher_claims(request: HttpRequest) -> Optional[Dict[str, Any]]:
     return None
 
 
-
 def _redirect_to_sso_consume(request: HttpRequest, token: str) -> HttpResponse:
     campaign_id = (
         request.GET.get("campaign_id")
@@ -146,9 +146,8 @@ def _redirect_to_sso_consume(request: HttpRequest, token: str) -> HttpResponse:
 
     # next URL without token params
     params = request.GET.copy()
-    for k in ("token", "jwt", "access_token"):
-        if k in params:
-            params.pop(k)
+    for k in ("token", "sso_token", "jwt", "access_token"):
+        params.pop(k, None)
 
     next_url = request.path
     if params:
@@ -162,16 +161,14 @@ def _redirect_to_sso_consume(request: HttpRequest, token: str) -> HttpResponse:
 
 def publisher_required(view_func):
     """
-    Part-C destination behavior:
-    - If valid SSO session exists -> allow
+    Destination behavior:
+    - If valid SSO session exists AND master allow-list passes -> allow
     - Else if token present -> route via /sso/consume/
-    - Else -> 401 unauthorised access
+    - Else -> 401
 
-    Adds print logs (JSON lines) without leaking tokens.
+    Debug:
+      Add ?debug_sso=1 to any protected URL to see plaintext diagnostics.
     """
-    import json
-    import time
-    import uuid
 
     @wraps(view_func)
     def _wrapped(request: HttpRequest, *args, **kwargs):
@@ -187,36 +184,56 @@ def publisher_required(view_func):
                 "view": getattr(view_func, "__name__", "unknown"),
             }
             payload.update(data)
-            try:
-                print(json.dumps(payload, default=str))
-            except Exception:
-                print(f"[req_id={req_id}] {event} {data}")
+            print(json.dumps(payload, default=str))
 
-        _plog("publisher_required.start")
+        debug = _debug_enabled(request)
+        debug_lines = []
+
+        def _dbg(line: str):
+            if debug:
+                debug_lines.append(line)
+
+        _plog("publisher_required.start", query_keys=list(request.GET.keys()))
+        _dbg("publisher_required.start")
+        _dbg(f"path={request.path}")
+        _dbg(f"query_keys={list(request.GET.keys())}")
 
         try:
             claims = get_publisher_claims(request)
         except Exception as e:
             _plog("publisher_required.claims_error", error=str(e))
-            return unauthorized_response()
+            _dbg(f"claims_error={type(e).__name__}: {e}")
+            return HttpResponse("\n".join(debug_lines), status=401, content_type="text/plain") if debug else unauthorized_response()
 
         if claims:
-            roles = claims.get("roles")
-            # Do not print sensitive fields; best-effort identify
-            username = (claims.get("email") or claims.get("username") or claims.get("sub") or "")
-            if isinstance(username, str) and "@" in username:
-                u_masked = username.split("@", 1)[0][:2] + "***@" + username.split("@", 1)[1]
-            else:
-                u_masked = str(username)[:6] + "***" if username else ""
-            _plog("publisher_required.authorized", user=u_masked, roles=roles)
+            _plog("publisher_required.authorized", roles=claims.get("roles"))
+            _dbg("authorized=True")
             return view_func(request, *args, **kwargs)
 
+        # Not authorized via session. Explain why (debug), then try token.
+        ident = request.session.get(SESSION_KEY)
+        _dbg(f"has_session_ident={isinstance(ident, dict)}")
+        if isinstance(ident, dict):
+            _dbg(f"session_ident_keys={list(ident.keys())}")
+            _dbg(f"session_roles={ident.get('roles')}")
+            extracted_email = _extract_email_from_claims(ident)
+            _dbg(f"extracted_email={'<missing>' if not extracted_email else extracted_email}")
+            try:
+                ok = master_db.authorized_publisher_exists(extracted_email) if extracted_email else False
+                _dbg(f"master_allowlist_ok={ok}")
+            except Exception as e:
+                _dbg(f"master_allowlist_error={type(e).__name__}: {e}")
+
         token = _extract_token(request)
+        _dbg(f"token_present={bool(token)}")
         if token:
             _plog("publisher_required.token_present.redirect_to_consume", token_len=len(token))
-            return _redirect_to_sso_consume(request, token)
+            _dbg("redirecting_to=/sso/consume/")
+            resp = _redirect_to_sso_consume(request, token)
+            return HttpResponse("\n".join(debug_lines), content_type="text/plain") if debug else resp
 
         _plog("publisher_required.unauthorized.no_claims_no_token")
-        return unauthorized_response()
+        _dbg("unauthorized_reason=no_claims_no_token_or_session_invalidated")
+        return HttpResponse("\n".join(debug_lines), status=401, content_type="text/plain") if debug else unauthorized_response()
 
     return _wrapped
