@@ -706,38 +706,41 @@
 
       <div class="banner-list">
         {% for c in pe_campaign_support %}
-          {% if c.banner_target_url and (c.banner_large_url or c.banner_small_url) %}
-            <a
-              class="banner-link"
-              href="{{ c.banner_target_url }}"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <picture>
-                {% if c.banner_small_url %}
-                  <source
-                    media="(max-width: 640px)"
-                    srcset="{{ c.banner_small_url }}"
-                  />
-                {% endif %}
-
-                {% if c.banner_large_url %}
-                  <img
-                    src="{{ c.banner_large_url }}"
-                    alt="{{ c.brand }} banner"
-                    loading="lazy"
-                  />
-                {% else %}
-                  <img
-                    src="{{ c.banner_small_url }}"
-                    alt="{{ c.brand }} banner"
-                    loading="lazy"
-                  />
-                {% endif %}
-              </picture>
-            </a>
+  {% if c.banner_target_url %}
+    {% if c.banner_large_url or c.banner_small_url %}
+      <a
+        class="banner-link"
+        href="{{ c.banner_target_url }}"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <picture>
+          {% if c.banner_small_url %}
+            <source
+              media="(max-width: 640px)"
+              srcset="{{ c.banner_small_url }}"
+            />
           {% endif %}
-        {% endfor %}
+
+          {% if c.banner_large_url %}
+            <img
+              src="{{ c.banner_large_url }}"
+              alt="{{ c.brand }} banner"
+              loading="lazy"
+            />
+          {% else %}
+            <img
+              src="{{ c.banner_small_url }}"
+              alt="{{ c.brand }} banner"
+              loading="lazy"
+            />
+          {% endif %}
+        </picture>
+      </a>
+    {% endif %}
+  {% endif %}
+{% endfor %}
+
       </div>
     </div>
   {% endif %}
