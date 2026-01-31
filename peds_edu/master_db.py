@@ -303,57 +303,66 @@ def resolve_master_doctor_auth(email: str, raw_password: str) -> Optional[Master
 
 def master_row_to_template_context(row: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
-    Map a raw MASTER DB doctor row (dict) into the template-friendly structures used across portal pages.
+    Convert master row into template-compatible dicts expected by the portal templates:
 
-    Important:
-      - We *derive* state from PIN when possible, to avoid stale/incorrect state values in MASTER DB.
-        (This fixes cases where a PIN from another state was saved with default 'Maharashtra'.)
+      - doctor.user.full_name, doctor.user.email, doctor.doctor_id, doctor.whatsapp_number, doctor.imc_number
+      - doctor.clinic.display_name, clinic_phone, clinic_whatsapp_number, address_text, state, postal_code
+
+    NOTE: We attempt to derive the state from PIN code (local pincode directory) to avoid stale/incorrect
+    state values in MASTER DB (e.g., a non-Maharashtra PIN saved with default "Maharashtra").
     """
     fm = _field_map()
 
-    first = str(row.get(fm["first_name"]) or "").strip()
-    last = str(row.get(fm["last_name"]) or "").strip()
-    full = (f"{first} {last}").strip()
+    doctor_id = str(row.get(fm["doctor_id"], "") or "").strip()
+    first = str(row.get(fm["first_name"], "") or "")
+    last = str(row.get(fm["last_name"], "") or "")
+    full_name = _normalize_full_name(first, last).strip() or "Doctor"
 
-    doctor_id = str(row.get(fm["doctor_id"]) or "").strip()
-    email = str(row.get(fm["email"]) or "").strip()
-    whatsapp = str(row.get(fm["whatsapp_no"]) or "").strip()
+    doctor_email = str(row.get(fm["email"], "") or "").strip()
+    doctor_whatsapp = str(row.get(fm["whatsapp_no"], "") or "").strip()
+    imc = str(row.get(fm["imc_number"], "") or "").strip()
 
-    clinic_address = str(row.get(fm["clinic_address"]) or "").strip()
-    clinic_phone = str(row.get(fm["clinic_phone"]) or "").strip()
-    clinic_whatsapp = str(row.get(fm["clinic_whatsapp"]) or "").strip()
-    postal_code = str(row.get(fm["postal_code"]) or "").strip()
-    state_raw = str(row.get(fm["state"]) or "").strip()
+    clinic_name = str(row.get(fm["clinic_name"], "") or "").strip()
+    clinic_display = clinic_name or f"Dr. {full_name}"
+
+    clinic_phone = str(row.get(fm["clinic_phone"], "") or "").strip()
+    clinic_whatsapp = str(row.get(fm["clinic_whatsapp"], "") or "").strip()
+
+    clinic_address = str(row.get(fm["clinic_address"], "") or "").strip()
+    postal_code = str(row.get(fm["postal_code"], "") or "").strip()
+    state_raw = str(row.get(fm["state"], "") or "").strip()
 
     # Prefer state inferred from PIN (local lookup), if available.
     inferred_state: Optional[str] = None
     if postal_code:
         try:
-            # Local dataset; no network dependency.
-            from accounts.pincode_directory import get_state_for_pincode, IndiaPincodeDirectoryNotReady  # type: ignore
+            from accounts.pincode_directory import get_state_for_pincode  # type: ignore
             inferred_state = get_state_for_pincode(postal_code)
         except Exception:
             inferred_state = None
 
     state = (inferred_state or state_raw).strip()
 
-    doctor = {
-        "doctor_id": doctor_id,
-        "user": {
-            "full_name": full,
-            "email": email,
-        },
-        "whatsapp_number": whatsapp,
-        "imc_number": str(row.get(fm["imc_number"]) or "").strip(),
-    }
-
-    clinic = {
-        "clinic_name": str(row.get(fm["clinic_name"]) or "").strip(),
+    clinic: Dict[str, Any] = {
+        "display_name": clinic_display,
         "clinic_phone": clinic_phone,
         "clinic_whatsapp_number": clinic_whatsapp,
-        "address": clinic_address,
+        "address_text": clinic_address,
         "state": state,
         "postal_code": postal_code,
+    }
+
+    doctor: Dict[str, Any] = {
+        "doctor_id": doctor_id,
+        "whatsapp_number": doctor_whatsapp,
+        "imc_number": imc,
+        "photo": None,  # optional: map photo if you have a URL/field to use
+        "user": {
+            "full_name": full_name,
+            "email": doctor_email,
+        },
+        # IMPORTANT: templates expect doctor.clinic.* (nested), not a separate top-level "clinic"
+        "clinic": clinic,
     }
 
     return doctor, clinic
@@ -438,7 +447,7 @@ def update_master_password(
                 [new_hash, doctor_id],
             )
     return True
-    
+
 # ---------------------------------------------------------------------
 # Campaign acknowledgements & banners (Doctor/Clinic sharing portal)
 # ---------------------------------------------------------------------
@@ -700,6 +709,9 @@ def fetch_pe_campaign_support_for_doctor_email(
 
     where_sql = " OR ".join(where_parts)
 
+    # IMPORTANT:
+    # The shared MASTER_DB_ALIAS.sql shows campaign_doctorcampaignenrollment has NO "active" column.
+    # If we filter on e.active, the query fails and banners never render (doctor_share catches and shows none).
     sql = f"""
         SELECT
             c.id,
@@ -714,7 +726,6 @@ def fetch_pe_campaign_support_for_doctor_email(
         LEFT JOIN campaign_brand b ON b.id = c.brand_id
         WHERE ({where_sql})
           AND c.system_pe = 1
-          AND e.active = 1
         ORDER BY c.start_date DESC, c.created_at DESC, c.id ASC
     """
 
