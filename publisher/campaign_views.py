@@ -823,7 +823,12 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
     existing = Campaign.objects.filter(campaign_id=campaign_id).first()
     if existing and request.method == "GET":
         messages.info(request, "Campaign already has details. Redirected to edit screen.")
-        return redirect(reverse("campaign_publisher:edit_campaign_details", kwargs={"campaign_id": campaign_id}))
+        return redirect(
+            reverse(
+                "campaign_publisher:edit_campaign_details",
+                kwargs={"campaign_id": campaign_id},
+            )
+        )
 
     # MASTER values (read-only in Project2)
     try:
@@ -839,9 +844,15 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
 
     readonly = {
         "doctors_supported": doctors_supported_ro,
-        "banner_small_url": str(getattr(master_campaign, "banner_small_url", "") or "") if master_campaign else "",
-        "banner_large_url": str(getattr(master_campaign, "banner_large_url", "") or "") if master_campaign else "",
-        "banner_target_url": str(getattr(master_campaign, "banner_target_url", "") or "") if master_campaign else "",
+        "banner_small_url": str(getattr(master_campaign, "banner_small_url", "") or "")
+        if master_campaign
+        else "",
+        "banner_large_url": str(getattr(master_campaign, "banner_large_url", "") or "")
+        if master_campaign
+        else "",
+        "banner_target_url": str(getattr(master_campaign, "banner_target_url", "") or "")
+        if master_campaign
+        else "",
     }
 
     if request.method == "POST":
@@ -849,32 +860,60 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
         if form.is_valid():
             new_cluster_name = form.cleaned_data["new_video_cluster_name"]
 
-            # Existing check (same logic as Portal3101)
-            if VideoClusterLanguage.objects.filter(name__iexact=new_cluster_name).exists():
-                messages.error(request, "video cluster name already exists.  Write a different name")
+            if VideoClusterLanguage.objects.filter(
+                name__iexact=new_cluster_name
+            ).exists():
+                messages.error(
+                    request,
+                    "video cluster name already exists.  Write a different name",
+                )
                 return render(
                     request,
                     "publisher/add_campaign_details.html",
-                    {"form": form, "campaign_id": campaign_id, "publisher": claims, "show_auth_links": False, "readonly": readonly},
+                    {
+                        "form": form,
+                        "campaign_id": campaign_id,
+                        "publisher": claims,
+                        "show_auth_links": False,
+                        "readonly": readonly,
+                    },
                 )
 
             selected_items = json.loads(form.cleaned_data["selected_items_json"])
             video_ids = _expand_selected_items_to_video_ids(selected_items)
             if not video_ids:
-                form.add_error(None, "Please select at least one valid video or video-cluster.")
+                form.add_error(
+                    None,
+                    "Please select at least one valid video or video-cluster.",
+                )
                 return render(
                     request,
                     "publisher/add_campaign_details.html",
-                    {"form": form, "campaign_id": campaign_id, "publisher": claims, "show_auth_links": False, "readonly": readonly},
+                    {
+                        "form": form,
+                        "campaign_id": campaign_id,
+                        "publisher": claims,
+                        "show_auth_links": False,
+                        "readonly": readonly,
+                    },
                 )
 
             if Campaign.objects.filter(campaign_id=campaign_id).exists():
-                messages.error(request, "Campaign already exists. Use edit instead.")
-                return redirect(reverse("campaign_publisher:edit_campaign_details", kwargs={"campaign_id": campaign_id}))
+                messages.error(
+                    request, "Campaign already exists. Use edit instead."
+                )
+                return redirect(
+                    reverse(
+                        "campaign_publisher:edit_campaign_details",
+                        kwargs={"campaign_id": campaign_id},
+                    )
+                )
 
             publisher_sub = str(claims.get("sub") or "")
             publisher_username = str(claims.get("username") or "")
-            publisher_roles = ",".join([str(r) for r in (claims.get("roles") or [])])
+            publisher_roles = ",".join(
+                [str(r) for r in (claims.get("roles") or [])]
+            )
 
             with transaction.atomic():
                 trigger = _get_or_create_brand_trigger()
@@ -897,24 +936,29 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
                     name=new_cluster_name,
                 )
 
-                videos = list(Video.objects.filter(id__in=video_ids).order_by("code"))
+                videos = list(
+                    Video.objects.filter(id__in=video_ids).order_by("code")
+                )
                 for idx, v in enumerate(videos, start=1):
-                    VideoClusterVideo.objects.create(video_cluster=cluster, video=v, sort_order=idx)
+                    VideoClusterVideo.objects.create(
+                        video_cluster=cluster, video=v, sort_order=idx
+                    )
 
-                # Non-editable values always come from MASTER (or safe fallback)
                 ds_value = int(readonly.get("doctors_supported") or 0)
-                bt_value = str(readonly.get("banner_target_url") or "").strip()
+
+                # ✅ UPDATED bt_value LOGIC
+                bt_value = (
+                    str(readonly.get("banner_target_url") or "").strip()
+                    or str(form.cleaned_data.get("banner_target_url") or "").strip()
+                )
 
                 Campaign.objects.create(
                     campaign_id=campaign_id,
                     new_video_cluster_name=new_cluster_name,
                     selection_json=form.cleaned_data["selected_items_json"],
                     doctors_supported=ds_value,
-
-                    # Keep local file-path fields non-null; do not upload in Project2
                     banner_small="",
                     banner_large="",
-
                     banner_target_url=bt_value,
                     start_date=form.cleaned_data["start_date"],
                     end_date=form.cleaned_data["end_date"],
@@ -926,8 +970,14 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
                     wa_addition=form.cleaned_data["wa_addition"],
                 )
 
-            messages.success(request, "Campaign saved. Video cluster created successfully.")
-            return redirect(f"{reverse('campaign_publisher:publisher_landing_page')}?{urlencode({'campaign-id': campaign_id})}")
+            messages.success(
+                request,
+                "Campaign saved. Video cluster created successfully.",
+            )
+            return redirect(
+                f"{reverse('campaign_publisher:publisher_landing_page')}?"
+                f"{urlencode({'campaign-id': campaign_id})}"
+            )
 
     # GET (and POST invalid)
     initial = {
@@ -935,23 +985,38 @@ def add_campaign_details(request: HttpRequest) -> HttpResponse:
         "selected_items_json": "[]",
         "email_registration": "",
         "wa_addition": "",
+        "banner_target_url": "",  # ✅ ADDED
     }
 
-    # Prefill from MASTER when present (still editable messages + name in Project2)
+    # Prefill from MASTER when present
     if master_campaign:
         if getattr(master_campaign, "new_video_cluster_name", ""):
-            initial["new_video_cluster_name"] = master_campaign.new_video_cluster_name
+            initial["new_video_cluster_name"] = (
+                master_campaign.new_video_cluster_name
+            )
         if getattr(master_campaign, "email_registration", ""):
-            initial["email_registration"] = master_campaign.email_registration
+            initial["email_registration"] = (
+                master_campaign.email_registration
+            )
         if getattr(master_campaign, "wa_addition", ""):
             initial["wa_addition"] = master_campaign.wa_addition
+        if getattr(master_campaign, "banner_target_url", ""):
+            initial["banner_target_url"] = (
+                master_campaign.banner_target_url
+            )
 
     form = CampaignCreateForm(initial=initial)
 
     return render(
         request,
         "publisher/add_campaign_details.html",
-        {"form": form, "campaign_id": campaign_id, "publisher": claims, "show_auth_links": False, "readonly": readonly},
+        {
+            "form": form,
+            "campaign_id": campaign_id,
+            "publisher": claims,
+            "show_auth_links": False,
+            "readonly": readonly,
+        },
     )
 
 @publisher_required
@@ -999,7 +1064,9 @@ def edit_campaign_details(request: HttpRequest, campaign_id: str) -> HttpRespons
         master_campaign = None
 
     readonly = {
-        "doctors_supported": int(getattr(master_campaign, "doctors_supported", campaign.doctors_supported) or 0),
+        "doctors_supported": int(
+            getattr(master_campaign, "doctors_supported", campaign.doctors_supported) or 0
+        ),
         "banner_small_url": (
             str(getattr(master_campaign, "banner_small_url", "") or "")
             if master_campaign and getattr(master_campaign, "banner_small_url", "")
@@ -1025,23 +1092,40 @@ def edit_campaign_details(request: HttpRequest, campaign_id: str) -> HttpRespons
             video_ids = _expand_selected_items_to_video_ids(selected_items)
 
             if not video_ids:
-                form.add_error(None, "Please select at least one valid video or video-cluster.")
+                form.add_error(
+                    None,
+                    "Please select at least one valid video or video-cluster.",
+                )
                 return render(
                     request,
                     "publisher/edit_campaign_details.html",
-                    {"form": form, "campaign": campaign, "publisher": claims, "show_auth_links": False, "readonly": readonly},
+                    {
+                        "form": form,
+                        "campaign": campaign,
+                        "publisher": claims,
+                        "show_auth_links": False,
+                        "readonly": readonly,
+                    },
                 )
 
-            # Keep original uniqueness check logic
             if campaign.video_cluster_id:
-                if VideoClusterLanguage.objects.filter(name__iexact=new_cluster_name).exclude(
-                    video_cluster_id=campaign.video_cluster_id
-                ).exists():
-                    messages.error(request, "video cluster name already exists.  Write a different name")
+                if VideoClusterLanguage.objects.filter(
+                    name__iexact=new_cluster_name
+                ).exclude(video_cluster_id=campaign.video_cluster_id).exists():
+                    messages.error(
+                        request,
+                        "video cluster name already exists.  Write a different name",
+                    )
                     return render(
                         request,
                         "publisher/edit_campaign_details.html",
-                        {"form": form, "campaign": campaign, "publisher": claims, "show_auth_links": False, "readonly": readonly},
+                        {
+                            "form": form,
+                            "campaign": campaign,
+                            "publisher": claims,
+                            "show_auth_links": False,
+                            "readonly": readonly,
+                        },
                     )
 
             with transaction.atomic():
@@ -1052,18 +1136,28 @@ def edit_campaign_details(request: HttpRequest, campaign_id: str) -> HttpRespons
                     cluster.search_keywords = new_cluster_name
                     cluster.save()
 
-                    cl_en = VideoClusterLanguage.objects.filter(video_cluster=cluster, language_code="en").first()
+                    cl_en = VideoClusterLanguage.objects.filter(
+                        video_cluster=cluster, language_code="en"
+                    ).first()
                     if cl_en:
                         cl_en.name = new_cluster_name
                         cl_en.save()
                     else:
-                        VideoClusterLanguage.objects.create(video_cluster=cluster, language_code="en", name=new_cluster_name)
+                        VideoClusterLanguage.objects.create(
+                            video_cluster=cluster,
+                            language_code="en",
+                            name=new_cluster_name,
+                        )
 
                 if cluster:
                     VideoClusterVideo.objects.filter(video_cluster=cluster).delete()
-                    videos = list(Video.objects.filter(id__in=video_ids).order_by("code"))
+                    videos = list(
+                        Video.objects.filter(id__in=video_ids).order_by("code")
+                    )
                     for idx, v in enumerate(videos, start=1):
-                        VideoClusterVideo.objects.create(video_cluster=cluster, video=v, sort_order=idx)
+                        VideoClusterVideo.objects.create(
+                            video_cluster=cluster, video=v, sort_order=idx
+                        )
 
                 campaign.new_video_cluster_name = new_cluster_name
                 campaign.selection_json = form.cleaned_data["selected_items_json"]
@@ -1072,9 +1166,14 @@ def edit_campaign_details(request: HttpRequest, campaign_id: str) -> HttpRespons
                 campaign.email_registration = form.cleaned_data["email_registration"]
                 campaign.wa_addition = form.cleaned_data["wa_addition"]
 
-                # ENFORCE MASTER read-only fields (not editable in Project2)
-                campaign.doctors_supported = int(readonly.get("doctors_supported") or 0)
-                campaign.banner_target_url = str(readonly.get("banner_target_url") or "")
+                # ENFORCE MASTER read-only fields (with fallback)
+                campaign.doctors_supported = int(
+                    readonly.get("doctors_supported") or 0
+                )
+                campaign.banner_target_url = (
+                    str(readonly.get("banner_target_url") or "").strip()
+                    or str(form.cleaned_data.get("banner_target_url") or "").strip()
+                )
 
                 campaign.save()
 
@@ -1091,13 +1190,20 @@ def edit_campaign_details(request: HttpRequest, campaign_id: str) -> HttpRespons
             "end_date": campaign.end_date,
             "email_registration": campaign.email_registration or "",
             "wa_addition": campaign.wa_addition or "",
+            "banner_target_url": campaign.banner_target_url or "",  # ✅ ADDED
         }
     )
 
     return render(
         request,
         "publisher/edit_campaign_details.html",
-        {"form": form, "campaign": campaign, "publisher": claims, "show_auth_links": False, "readonly": readonly},
+        {
+            "form": form,
+            "campaign": campaign,
+            "publisher": claims,
+            "show_auth_links": False,
+            "readonly": readonly,
+        },
     )
 
 
