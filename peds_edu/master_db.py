@@ -11,6 +11,31 @@ from django.core import signing
 from django.db import connections
 
 
+def _get_banner_target_url_from_local_publisher_campaign(campaign_id: str) -> Optional[str]:
+    cid = (campaign_id or "").strip().replace("-", "")
+    if not cid:
+        return None
+
+    try:
+        with connections["default"].cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT banner_target_url
+                FROM publisher_campaign
+                WHERE REPLACE(campaign_id, '-', '') = %s
+                LIMIT 1
+                """,
+                [cid],
+            )
+            row = cursor.fetchone()
+        if row and row[0]:
+            return str(row[0]).strip()
+    except Exception:
+        return None
+
+    return None
+
+
 @dataclass(frozen=True)
 class MasterDoctorAuthResult:
     """Normalized identity+auth result for a doctor/clinic-staff login attempt."""
@@ -654,6 +679,9 @@ def fetch_pe_campaign_support_for_doctor_email(email: str) -> List[Dict[str, str
         b_small = str((r[2] if len(r) > 2 else "") or "").strip()
         b_large = str((r[3] if len(r) > 3 else "") or "").strip()
         b_target = str((r[4] if len(r) > 4 else "") or "").strip()
+        if not b_target:
+            b_target = _get_banner_target_url_from_local_publisher_campaign(cid) or ""
+
         brand = str((r[5] if len(r) > 5 else "") or "").strip()
 
         video_cluster = resolve_campaign_video_cluster(campaign_id=cid, campaign_name_fallback=cname)
