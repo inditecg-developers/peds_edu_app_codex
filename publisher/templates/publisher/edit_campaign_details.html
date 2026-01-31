@@ -12,12 +12,17 @@
     <strong>Master-managed fields (read-only):</strong>
 
     <div style="margin-top: 8px;">
-      <div><strong>Doctors supported:</strong> {{ readonly.doctors_supported|default_if_none:"—" }}</div>
+      <div>
+        <strong>Doctors supported:</strong>
+        {{ readonly.doctors_supported|default_if_none:"—" }}
+      </div>
 
       <div style="margin-top: 6px;">
         <strong>Banner click URL:</strong>
         {% if readonly.banner_target_url %}
-          <a href="{{ readonly.banner_target_url }}" target="_blank" rel="noopener">{{ readonly.banner_target_url }}</a>
+          <a href="{{ readonly.banner_target_url }}" target="_blank" rel="noopener">
+            {{ readonly.banner_target_url }}
+          </a>
         {% else %}
           —
         {% endif %}
@@ -27,7 +32,9 @@
         <strong>Campaign banner:</strong>
         {% if readonly.banner_large_url or readonly.banner_small_url %}
           <div style="margin-top: 6px;">
-            {% if readonly.banner_target_url %}<a href="{{ readonly.banner_target_url }}" target="_blank" rel="noopener">{% endif %}
+            {% if readonly.banner_target_url %}
+              <a href="{{ readonly.banner_target_url }}" target="_blank" rel="noopener">
+            {% endif %}
               <picture>
                 {% if readonly.banner_small_url %}
                   <source media="(max-width: 640px)" srcset="{{ readonly.banner_small_url }}">
@@ -41,7 +48,9 @@
             {% if readonly.banner_target_url %}</a>{% endif %}
           </div>
         {% else %}
-          <div class="muted" style="margin-top: 6px;">No banner URLs found in MASTER DB for this campaign.</div>
+          <div class="muted" style="margin-top: 6px;">
+            No banner URLs found in MASTER DB for this campaign.
+          </div>
         {% endif %}
       </div>
     </div>
@@ -57,11 +66,27 @@
     {{ form.campaign_id }}
 
     <div style="margin-top: 12px;">
-      <label for="{{ form.new_video_cluster_name.id_for_label }}">{{ form.new_video_cluster_name.label }}</label>
+      <label for="{{ form.new_video_cluster_name.id_for_label }}">
+        {{ form.new_video_cluster_name.label }}
+      </label>
       {{ form.new_video_cluster_name }}
       {% if form.new_video_cluster_name.errors %}
         <div class="message error">{{ form.new_video_cluster_name.errors }}</div>
       {% endif %}
+    </div>
+
+    {# ✅ NEW: banner_target_url (Project-2 fallback field) #}
+    <div style="margin-top: 14px;">
+      <label for="{{ form.banner_target_url.id_for_label }}">
+        {{ form.banner_target_url.label }}
+      </label>
+      {{ form.banner_target_url }}
+      {% if form.banner_target_url.errors %}
+        <div class="message error">{{ form.banner_target_url.errors }}</div>
+      {% endif %}
+      <div class="muted" style="margin-top: 6px;">
+        Used only if MASTER campaign banner click URL is blank.
+      </div>
     </div>
 
     <hr>
@@ -69,7 +94,12 @@
 
     <div style="margin-top: 10px;">
       <label for="searchInput">Search videos or clusters</label>
-      <input id="searchInput" type="text" placeholder="Type keywords or video/cluster name..." autocomplete="off" />
+      <input
+        id="searchInput"
+        type="text"
+        placeholder="Type keywords or video/cluster name..."
+        autocomplete="off"
+      />
     </div>
 
     <div id="searchResults" style="margin-top: 10px;"></div>
@@ -92,7 +122,9 @@
     <hr>
 
     <div style="margin-top: 14px;">
-      <label for="{{ form.email_registration.id_for_label }}">{{ form.email_registration.label }}</label>
+      <label for="{{ form.email_registration.id_for_label }}">
+        {{ form.email_registration.label }}
+      </label>
       {{ form.email_registration }}
       {% if form.email_registration.errors %}
         <div class="message error">{{ form.email_registration.errors }}</div>
@@ -100,7 +132,9 @@
     </div>
 
     <div style="margin-top: 14px;">
-      <label for="{{ form.wa_addition.id_for_label }}">{{ form.wa_addition.label }}</label>
+      <label for="{{ form.wa_addition.id_for_label }}">
+        {{ form.wa_addition.label }}
+      </label>
       {{ form.wa_addition }}
       {% if form.wa_addition.errors %}
         <div class="message error">{{ form.wa_addition.errors }}</div>
@@ -109,7 +143,9 @@
 
     <div class="row two" style="margin-top: 14px;">
       <div>
-        <label for="{{ form.start_date.id_for_label }}">{{ form.start_date.label }}</label>
+        <label for="{{ form.start_date.id_for_label }}">
+          {{ form.start_date.label }}
+        </label>
         {{ form.start_date }}
         {% if form.start_date.errors %}
           <div class="message error">{{ form.start_date.errors }}</div>
@@ -117,7 +153,9 @@
       </div>
 
       <div>
-        <label for="{{ form.end_date.id_for_label }}">{{ form.end_date.label }}</label>
+        <label for="{{ form.end_date.id_for_label }}">
+          {{ form.end_date.label }}
+        </label>
         {{ form.end_date }}
         {% if form.end_date.errors %}
           <div class="message error">{{ form.end_date.errors }}</div>
@@ -127,13 +165,18 @@
 
     <div style="margin-top: 18px;">
       <button type="submit">Save</button>
-      <a class="btn btn-secondary" style="margin-left: 10px;"
-         href="{% url 'campaign_publisher:campaign_list' %}">
+      <a
+        class="btn btn-secondary"
+        style="margin-left: 10px;"
+        href="{% url 'campaign_publisher:campaign_list' %}"
+      >
         Back
       </a>
     </div>
   </form>
 </div>
+
+
 
 <script>
 (function() {
