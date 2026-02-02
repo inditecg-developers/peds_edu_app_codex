@@ -7,18 +7,11 @@ from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 from django.db import connections
 
-from accounts.models import DoctorProfile
 from catalog.constants import LANGUAGE_CODES, LANGUAGES
-from catalog.models import (
-    Video,
-    VideoLanguage,
-    VideoCluster,
-    VideoClusterLanguage,
-)
+from catalog.models import Video, VideoLanguage, VideoCluster, VideoClusterLanguage
 
 from peds_edu.master_db import (
     fetch_master_doctor_row_by_id,
-    fetch_master_doctor_row_by_email,  # <-- ADDED (non-destructive)
     master_row_to_template_context,
     build_patient_link_payload,
     sign_patient_payload,
@@ -30,18 +23,20 @@ from .services import build_whatsapp_message_prefixes, get_catalog_json_cached
 
 
 # -----------------------
-# Campaign bundle helpers
+# Required by sharing/urls.py
 # -----------------------
+def home(request: HttpRequest) -> HttpResponse:
+    # Keep behaviour minimal + safe
+    return redirect("accounts:login")
 
+
+# -----------------------
+# Campaign bundle helpers (read-only)
+# -----------------------
 def _fetch_all_campaign_bundle_codes() -> set[str]:
-    """
-    Returns ALL bundle codes that are referenced by any row in publisher_campaign.
-    These codes represent "campaign-created" bundles that should not be globally visible.
-    """
-    codes: set[str] = set()
     try:
-        with connections["default"].cursor() as cursor:
-            cursor.execute(
+        with connections["default"].cursor() as cur:
+            cur.execute(
                 """
                 SELECT DISTINCT vc.code
                 FROM publisher_campaign pc
@@ -49,96 +44,48 @@ def _fetch_all_campaign_bundle_codes() -> set[str]:
                 WHERE pc.video_cluster_id IS NOT NULL
                 """
             )
-            for (code,) in cursor.fetchall():
-                if code:
-                    codes.add(str(code).strip())
+            rows = cur.fetchall()
+        return {str(r[0]).strip() for r in (rows or []) if r and r[0]}
     except Exception:
         return set()
-    return codes
 
 
 def _fetch_allowed_bundle_codes_for_campaigns(campaign_ids: list[str]) -> set[str]:
-    """
-    Returns bundle codes that are referenced by publisher_campaign rows for campaign_ids.
-    """
-    if not campaign_ids:
+    ids = [str(c).strip().replace("-", "") for c in (campaign_ids or []) if str(c).strip()]
+    if not ids:
         return set()
 
-    campaign_ids = [c.strip() for c in campaign_ids if c and str(c).strip()]
-    if not campaign_ids:
-        return set()
+    placeholders = ", ".join(["%s"] * len(ids))
+    sql = f"""
+        SELECT DISTINCT vc.code
+        FROM publisher_campaign pc
+        JOIN catalog_videocluster vc ON vc.id = pc.video_cluster_id
+        WHERE REPLACE(pc.campaign_id, '-', '') IN ({placeholders})
+          AND pc.video_cluster_id IS NOT NULL
+    """
 
-    allowed: set[str] = set()
     try:
-        placeholders = ",".join(["%s"] * len(campaign_ids))
-        with connections["default"].cursor() as cursor:
-            cursor.execute(
-                f"""
-                SELECT DISTINCT vc.code
-                FROM publisher_campaign pc
-                JOIN catalog_videocluster vc ON vc.id = pc.video_cluster_id
-                WHERE pc.campaign_id IN ({placeholders})
-                  AND pc.video_cluster_id IS NOT NULL
-                """,
-                campaign_ids,
-            )
-            for (code,) in cursor.fetchall():
-                if code:
-                    allowed.add(str(code).strip())
+        with connections["default"].cursor() as cur:
+            cur.execute(sql, ids)
+            rows = cur.fetchall()
+        return {str(r[0]).strip() for r in (rows or []) if r and r[0]}
     except Exception:
         return set()
-
-    return allowed
-
-
-def _get_login_redirect() -> HttpResponse:
-    return redirect("accounts:login")
 
 
 @login_required
 def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
-    """
-    Doctor/clinic landing page:
-      - Authorizes based on session["master_doctor_id"] (set at login via master DB).
-      - Loads display fields from master DB redflags_doctor.
-      - Injects a signed doctor/clinic payload into catalog_json so JS can append it to patient links.
-      - Adds PE campaign acknowledgements + banners (from MASTER DB campaign_campaign) at bottom of page.
-      - Filters campaign-specific clusters to only those campaigns the doctor is enrolled in.
-    """
     session_doctor_id = request.session.get("master_doctor_id")
     if not session_doctor_id or session_doctor_id != doctor_id:
         return HttpResponseForbidden("Not allowed")
 
-    try:
-        row = fetch_master_doctor_row_by_id(doctor_id)
-    except Exception:
-        row = None
-
-    # ------------------------------------------------------------------
-    # NEW: if doctor_id in URL is stale/incorrect, recover via login email
-    # This change is ONLY applied in the not-found path; otherwise no behavior change.
-    # ------------------------------------------------------------------
+    row = fetch_master_doctor_row_by_id(doctor_id)
     if not row:
-        login_email = (request.session.get("master_login_email") or getattr(request.user, "email", "") or "").strip().lower()
-        if login_email:
-            try:
-                row2 = fetch_master_doctor_row_by_email(login_email)
-            except Exception:
-                row2 = None
-
-            if row2:
-                correct_doctor_id = str(row2.get("doctor_id") or "").strip()
-                if correct_doctor_id and correct_doctor_id != doctor_id:
-                    request.session["master_doctor_id"] = correct_doctor_id
-                    return redirect("sharing:doctor_share", doctor_id=correct_doctor_id)
-
         return HttpResponseForbidden("Doctor not found")
 
-    # Build template-friendly dicts
     doctor_ctx, clinic_ctx = master_row_to_template_context(row)
     doctor_name = ((doctor_ctx.get("user") or {}).get("full_name") or "").strip()
 
-    # Campaign acknowledgements + banners (system_pe campaigns only)
     login_email = (getattr(request.user, "email", "") or "").strip()
     doctor_email = ((doctor_ctx.get("user") or {}).get("email") or "").strip()
 
@@ -164,28 +111,22 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
     except Exception:
         pe_campaign_support = []
 
-    # Force refresh once to avoid stale cache during development.
     catalog_json = get_catalog_json_cached(force_refresh=True)
-
-    # Ensure we are working with a mutable dict
     if isinstance(catalog_json, str):
         try:
             catalog_json = json.loads(catalog_json)
         except Exception:
             catalog_json = {}
-
     catalog_json = dict(catalog_json or {})
 
-    # Inject doctor-specific, non-cached fields
     catalog_json["doctor_id"] = doctor_id
     catalog_json["message_prefixes"] = build_whatsapp_message_prefixes(doctor_name)
 
-    # Signed payload with all doctor/clinic display values needed by patient pages
     patient_payload = build_patient_link_payload(doctor_ctx, clinic_ctx)
     catalog_json["doctor_payload"] = sign_patient_payload(patient_payload)
 
     # ------------------------------------------------------------------
-    # Campaign-specific bundle filtering (SAFE)
+    # Campaign-specific bundle filtering
     # ------------------------------------------------------------------
     all_campaign_bundle_codes = _fetch_all_campaign_bundle_codes()
 
@@ -194,31 +135,34 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
         for item in (pe_campaign_support or [])
         if isinstance(item, dict) and item.get("campaign_id")
     ]
-
     allowed_bundle_codes = _fetch_allowed_bundle_codes_for_campaigns(allowed_campaign_ids)
 
-    if all_campaign_bundle_codes and "bundles" in catalog_json:
+    if all_campaign_bundle_codes and isinstance(catalog_json.get("bundles"), list):
         filtered_bundles = []
-        allowed_video_codes = set()
+        allowed_video_ids = set()
 
         for b in catalog_json.get("bundles", []):
-            code = b.get("code")
-            if not code:
+            if not isinstance(b, dict):
+                continue
+            bcode = str(b.get("code") or "").strip()
+            if not bcode:
                 continue
 
             # keep default bundles OR allowed campaign bundles
-            if code not in all_campaign_bundle_codes or code in allowed_bundle_codes:
+            if bcode not in all_campaign_bundle_codes or bcode in allowed_bundle_codes:
                 filtered_bundles.append(b)
-                for v in b.get("video_codes", []):
-                    allowed_video_codes.add(v)
+                for vid in (b.get("video_codes") or []):
+                    if vid:
+                        allowed_video_ids.add(str(vid))
 
         catalog_json["bundles"] = filtered_bundles
 
-        # prune videos
-        if "videos" in catalog_json:
+        # ✅ CRITICAL FIX:
+        # videos payload uses "id" (video code), not "code".:contentReference[oaicite:4]{index=4}
+        if isinstance(catalog_json.get("videos"), list):
             catalog_json["videos"] = [
                 v for v in catalog_json.get("videos", [])
-                if (v.get("id") or v.get("code")) in allowed_video_codes
+                if isinstance(v, dict) and str(v.get("id") or "").strip() in allowed_video_ids
             ]
 
     return render(
@@ -255,17 +199,15 @@ def patient_video(request: HttpRequest, doctor_id: str, video_code: str) -> Http
     clinic.setdefault("state", "")
     clinic.setdefault("postal_code", "")
 
-    lang = request.GET.get("lang") or "en"
+    lang = request.GET.get("lang", "en")
     if lang not in LANGUAGE_CODES:
         lang = "en"
 
     video = get_object_or_404(Video, code=video_code)
-    vlang = VideoLanguage.objects.filter(video=video, language_code=lang).first()
-    title = (vlang.title if vlang and vlang.title else video.code)
-
-    url = video.url
-    if vlang and vlang.url:
-        url = vlang.url
+    vlang = (
+        VideoLanguage.objects.filter(video=video, language_code=lang).first()
+        or VideoLanguage.objects.filter(video=video, language_code="en").first()
+    )
 
     return render(
         request,
@@ -273,10 +215,11 @@ def patient_video(request: HttpRequest, doctor_id: str, video_code: str) -> Http
         {
             "doctor": doctor,
             "clinic": clinic,
-            "title": title,
-            "video_url": url,
-            "language": lang,
+            "video": video,
+            "vlang": vlang,
+            "selected_lang": lang,
             "languages": LANGUAGES,
+            "show_auth_links": False,
         },
     )
 
@@ -301,21 +244,40 @@ def patient_cluster(request: HttpRequest, doctor_id: str, cluster_code: str) -> 
     clinic.setdefault("state", "")
     clinic.setdefault("postal_code", "")
 
-    lang = request.GET.get("lang") or "en"
+    lang = request.GET.get("lang", "en")
     if lang not in LANGUAGE_CODES:
         lang = "en"
 
-    cluster = get_object_or_404(VideoCluster, code=cluster_code)
-    clang = VideoClusterLanguage.objects.filter(video_cluster=cluster, language_code=lang).first()
-    title = (clang.display_name if clang and clang.display_name else cluster.code)
+    cluster = VideoCluster.objects.filter(code=cluster_code).first()
+    if cluster is None and cluster_code.isdigit():
+        cluster = get_object_or_404(VideoCluster, pk=int(cluster_code))
+    elif cluster is None:
+        cluster = get_object_or_404(VideoCluster, pk=-1)
 
-    # Videos for cluster (language-aware)
-    videos = []
-    for v in cluster.videos.all().order_by("sort_order", "id"):
-        vlang = VideoLanguage.objects.filter(video=v, language_code=lang).first()
-        vtitle = (vlang.title if vlang and vlang.title else v.code)
-        vurl = (vlang.url if vlang and vlang.url else v.url)
-        videos.append({"code": v.code, "title": vtitle, "url": vurl})
+    cl_lang = (
+        VideoClusterLanguage.objects.filter(video_cluster=cluster, language_code=lang).first()
+        or VideoClusterLanguage.objects.filter(video_cluster=cluster, language_code="en").first()
+    )
+    cluster_title = cl_lang.name if cl_lang else cluster.code
+
+    try:
+        videos = cluster.videos.all().order_by("sort_order", "id")
+    except Exception:
+        videos = cluster.videos.all().order_by("id")
+
+    items = []
+    for v in videos:
+        vlang = (
+            VideoLanguage.objects.filter(video=v, language_code=lang).first()
+            or VideoLanguage.objects.filter(video=v, language_code="en").first()
+        )
+        items.append(
+            {
+                "video": v,
+                "title": (vlang.title if vlang else v.code),
+                "url": (vlang.youtube_url if vlang else ""),
+            }
+        )
 
     return render(
         request,
@@ -323,9 +285,11 @@ def patient_cluster(request: HttpRequest, doctor_id: str, cluster_code: str) -> 
         {
             "doctor": doctor,
             "clinic": clinic,
-            "cluster_title": title,
-            "videos": videos,
-            "language": lang,
+            "cluster": cluster,
+            "cluster_title": cluster_title,
+            "items": items,
             "languages": LANGUAGES,
+            "selected_lang": lang,
+            "show_auth_links": False,
         },
     )
