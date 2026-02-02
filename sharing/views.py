@@ -6,6 +6,8 @@ from django.contrib.auth.decorators import login_required
 from django.http import HttpRequest, HttpResponse, HttpResponseForbidden
 from django.shortcuts import get_object_or_404, redirect, render
 
+from publisher.models import Campaign as PublisherCampaign
+
 from accounts.models import DoctorProfile
 from catalog.constants import LANGUAGE_CODES, LANGUAGES
 from catalog.models import (
@@ -25,8 +27,116 @@ from peds_edu.master_db import (
 )
 
 
-
 from .services import build_whatsapp_message_prefixes, get_catalog_json_cached
+
+
+def _norm_campaign_id(raw: str) -> str:
+    """Normalize UUID to 32-hex without hyphens for cross-DB comparisons."""
+    return (raw or "").strip().replace("-", "").lower()
+
+
+def _filter_catalog_for_campaign_bundles(*, catalog: dict, allowed_campaign_ids: set[str]) -> dict:
+    """
+    Hide campaign-specific bundles (publisher_campaign.video_cluster) unless the doctor is enrolled
+    in that campaign.
+
+    Keeps:
+      - all default bundles (not linked to any publisher campaign)
+      - campaign bundles whose campaign_id is in allowed_campaign_ids
+
+    Also rewrites each video's bundle_codes/trigger_codes/therapy_codes so filters remain consistent.
+    """
+    if not isinstance(catalog, dict) or not catalog:
+        return catalog
+
+    # Load campaign -> cluster_code mapping from local DB (Project2)
+    try:
+        qs = (
+            PublisherCampaign.objects.select_related("video_cluster")
+            .only("campaign_id", "video_cluster__code")
+        )
+    except Exception:
+        return catalog
+
+    campaign_cluster_by_cid: dict[str, str] = {}
+    all_campaign_cluster_codes: set[str] = set()
+
+    for c in qs:
+        cid = _norm_campaign_id(getattr(c, "campaign_id", ""))
+        vc = getattr(c, "video_cluster", None)
+        code = getattr(vc, "code", None)
+        if cid and code:
+            campaign_cluster_by_cid[cid] = str(code)
+            all_campaign_cluster_codes.add(str(code))
+
+    # If there are no campaign bundles, nothing to filter
+    if not all_campaign_cluster_codes:
+        return catalog
+
+    allowed_campaign_ids = {(_norm_campaign_id(x) or "") for x in (allowed_campaign_ids or set()) if x}
+    allowed_cluster_codes = {campaign_cluster_by_cid[cid] for cid in allowed_campaign_ids if cid in campaign_cluster_by_cid}
+
+    bundles_in = catalog.get("bundles") or []
+    if not isinstance(bundles_in, list):
+        return catalog
+
+    # Filter bundles list (do NOT mutate cached list)
+    bundles_out = [
+        b
+        for b in bundles_in
+        if isinstance(b, dict)
+        and (
+            (b.get("code") not in all_campaign_cluster_codes)
+            or (b.get("code") in allowed_cluster_codes)
+        )
+    ]
+
+    allowed_bundle_codes: set[str] = {str(b.get("code")) for b in bundles_out if b.get("code")}
+
+    # Build meta map for recomputing trigger_codes/therapy_codes
+    bundle_meta = {
+        str(b.get("code")): {
+            "trigger_code": b.get("trigger_code"),
+            "therapy_code": b.get("therapy_code"),
+        }
+        for b in bundles_out
+        if isinstance(b, dict) and b.get("code")
+    }
+
+    videos_in = catalog.get("videos") or []
+    if not isinstance(videos_in, list):
+        videos_in = []
+
+    videos_out = []
+    for v in videos_in:
+        if not isinstance(v, dict):
+            continue
+        nv = dict(v)
+
+        bundle_codes = [str(c) for c in (v.get("bundle_codes") or []) if str(c) in allowed_bundle_codes]
+        nv["bundle_codes"] = bundle_codes
+
+        # Recompute derived filters based on remaining bundles
+        trig_codes: list[str] = []
+        therapy_codes: list[str] = []
+        for bc in bundle_codes:
+            meta = bundle_meta.get(bc) or {}
+            t = meta.get("trigger_code")
+            th = meta.get("therapy_code")
+            if t and t not in trig_codes:
+                trig_codes.append(str(t))
+            if th and th not in therapy_codes:
+                therapy_codes.append(str(th))
+
+        nv["trigger_codes"] = trig_codes
+        nv["therapy_codes"] = therapy_codes
+
+        videos_out.append(nv)
+
+    out = dict(catalog)
+    out["bundles"] = bundles_out
+    out["videos"] = videos_out
+    return out
 
 
 def home(request: HttpRequest) -> HttpResponse:
@@ -42,6 +152,7 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
       - Loads display fields from master DB redflags_doctor.
       - Injects a signed doctor/clinic payload into catalog_json so JS can append it to patient links.
       - Adds PE campaign acknowledgements + banners (from MASTER DB campaign_campaign) at bottom of page.
+      - Filters campaign-specific clusters (Project2-created bundles) so doctors only see bundles for their campaign(s).
     """
     session_doctor_id = request.session.get("master_doctor_id")
     if not session_doctor_id or session_doctor_id != doctor_id:
@@ -96,6 +207,21 @@ def doctor_share(request: HttpRequest, doctor_id: str) -> HttpResponse:
             catalog_json = {}
 
     catalog_json = dict(catalog_json or {})
+
+    # Restrict campaign-specific bundles (clusters created per campaign in Project2) to doctors
+    # enrolled in those campaigns. Default bundles remain visible to everyone.
+    allowed_campaign_ids = {
+        _norm_campaign_id(str(item.get("campaign_id") or ""))
+        for item in (pe_campaign_support or [])
+        if isinstance(item, dict) and item.get("campaign_id")
+    }
+    try:
+        catalog_json = _filter_catalog_for_campaign_bundles(
+            catalog=catalog_json, allowed_campaign_ids=allowed_campaign_ids
+        )
+    except Exception:
+        # Never block the doctor landing page if filtering fails
+        pass
 
     # Inject doctor-specific, non-cached fields
     catalog_json["doctor_id"] = doctor_id
@@ -162,15 +288,12 @@ def patient_video(request: HttpRequest, doctor_id: str, video_code: str) -> Http
             "clinic": clinic,
             "video": video,
             "vlang": vlang,
-            "languages": LANGUAGES,
-            "selected_lang": lang,
-            "show_auth_links": False,
+            "lang": lang,
         },
     )
 
 
-def patient_cluster(request: HttpRequest, doctor_id: str, cluster_code: str) -> HttpResponse:
-    # Doctor/clinic display info comes from the signed payload (no DB query)
+def patient_bundle(request: HttpRequest, doctor_id: str, bundle_code: str) -> HttpResponse:
     token = (request.GET.get("d") or "").strip()
     payload = unsign_patient_payload(token) or {}
 
@@ -194,48 +317,25 @@ def patient_cluster(request: HttpRequest, doctor_id: str, cluster_code: str) -> 
     if lang not in LANGUAGE_CODES:
         lang = "en"
 
-    cluster = VideoCluster.objects.filter(code=cluster_code).first()
-    if cluster is None and cluster_code.isdigit():
-        cluster = get_object_or_404(VideoCluster, pk=int(cluster_code))
-    elif cluster is None:
-        cluster = get_object_or_404(VideoCluster, pk=-1)
+    bundle = get_object_or_404(VideoCluster, code=bundle_code)
 
-    cl_lang = (
-        VideoClusterLanguage.objects.filter(video_cluster=cluster, language_code=lang).first()
-        or VideoClusterLanguage.objects.filter(video_cluster=cluster, language_code="en").first()
+    blang = (
+        VideoClusterLanguage.objects.filter(video_cluster=bundle, language_code=lang).first()
+        or VideoClusterLanguage.objects.filter(video_cluster=bundle, language_code="en").first()
     )
-    cluster_title = cl_lang.name if cl_lang else cluster.code
 
-    try:
-        videos = cluster.videos.all().order_by("sort_order", "id")
-    except Exception:
-        videos = cluster.videos.all().order_by("id")
-
-    items = []
-    for v in videos:
-        vlang = (
-            VideoLanguage.objects.filter(video=v, language_code=lang).first()
-            or VideoLanguage.objects.filter(video=v, language_code="en").first()
-        )
-        items.append(
-            {
-                "video": v,
-                "title": (vlang.title if vlang else v.code),
-                "url": (vlang.youtube_url if vlang else ""),
-            }
-        )
+    videos = bundle.videos.filter(is_active=True).all()
+    # NOTE: you may want language-specific titles; kept as-is.
 
     return render(
         request,
-        "sharing/patient_cluster.html",
+        "sharing/patient_bundle.html",
         {
             "doctor": doctor,
             "clinic": clinic,
-            "cluster": cluster,
-            "cluster_title": cluster_title,
-            "items": items,
-            "languages": LANGUAGES,
-            "selected_lang": lang,
-            "show_auth_links": False,
+            "bundle": bundle,
+            "blang": blang,
+            "videos": videos,
+            "lang": lang,
         },
     )
