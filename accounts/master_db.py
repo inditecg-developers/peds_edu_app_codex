@@ -1116,3 +1116,80 @@ def count_campaign_enrollments(campaign_id: str) -> int:
             error=f"{type(ex).__name__}: {ex}",
         )
         return 0
+
+# =============================================================================
+# Doctor lookup by WhatsApp (MASTER DB) — robust override
+# Appended at end intentionally (does not remove any existing code).
+# =============================================================================
+
+@dataclass(frozen=True)
+class MasterDoctorLite:
+    doctor_id: str
+    email: str
+    full_name: str
+    whatsapp_no: str
+
+
+def get_doctor_by_whatsapp(whatsapp_number: str) -> Optional[MasterDoctorLite]:
+    """
+    Looks up doctor in MASTER redflags_doctor by WhatsApp number.
+
+    - Normalizes to digits and matches by last-10 digits (handles +91/91 prefix).
+    - Uses settings MASTER_DB_DOCTOR_TABLE + column names if provided, else defaults to redflags_doctor schema.
+    - Never raises; returns None on not found.
+    """
+    raw = (whatsapp_number or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        return None
+    last10 = digits[-10:] if len(digits) > 10 else digits
+
+    conn = get_master_connection()
+
+    # Your live schema is redflags_doctor (as per your settings bottom block)
+    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "redflags_doctor")
+    id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
+    fn_col = getattr(settings, "MASTER_DB_DOCTOR_FIRST_NAME_COLUMN", "first_name")
+    ln_col = getattr(settings, "MASTER_DB_DOCTOR_LAST_NAME_COLUMN", "last_name")
+    email_col = getattr(settings, "MASTER_DB_DOCTOR_EMAIL_COLUMN", "email")
+    wa_col = getattr(settings, "MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no")
+
+    # We match on RIGHT(whatsapp_no,10) to tolerate stored +91/91 prefixes or longer numbers.
+    sql = f"""
+        SELECT {qn(id_col)}, {qn(fn_col)}, {qn(ln_col)}, {qn(email_col)}, {qn(wa_col)}
+        FROM {qn(table)}
+        WHERE RIGHT({qn(wa_col)}, 10) = %s
+           OR {qn(wa_col)} = %s
+        LIMIT 1
+    """
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, [last10, digits])
+            row = cur.fetchone()
+    except Exception as ex:
+        _log_db_exc(
+            "master_db.get_doctor_by_whatsapp.error",
+            table=table,
+            whatsapp_last10=last10,
+            error=f"{type(ex).__name__}: {ex}",
+        )
+        return None
+
+    if not row:
+        return None
+
+    doctor_id = str(row[0] or "").strip()
+    first = str(row[1] or "").strip()
+    last = str(row[2] or "").strip()
+    email = str(row[3] or "").strip()
+    wa = str(row[4] or "").strip()
+
+    full_name = (f"{first} {last}").strip() or doctor_id or "Doctor"
+
+    return MasterDoctorLite(
+        doctor_id=doctor_id,
+        email=email,
+        full_name=full_name,
+        whatsapp_no=wa,
+    )
