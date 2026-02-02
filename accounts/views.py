@@ -514,15 +514,26 @@ def register_doctor(request):
             request_id=request_id,
             doctor_id=doctor_id,
         )
-    except Exception:
-        _log_exception(
-            "doctor_register.master_create_exception",
-            request_id=request_id,
-            doctor_id=doctor_id,
-        )
+    except Exception as e:
+    _log_exception(
+        "doctor_register.master_create_exception",
+        request_id=request_id,
+        doctor_id=doctor_id,
+        error=str(e),
+    )
+
+    # 🔎 TEMP DEBUG: show exact exception on screen when debug=1
+    if request.GET.get("debug") == "1" or request.POST.get("debug") == "1":
         return HttpResponseServerError(
-            "Doctor registration failed. Please try again later."
+            "Doctor registration failed.\n\n"
+            f"Exception type: {type(e).__name__}\n"
+            f"Exception message: {str(e)}\n"
         )
+
+    return HttpResponseServerError(
+        "Doctor registration failed. Please try again later."
+    )
+
 
     _log(
         "doctor_register.exit_success",
