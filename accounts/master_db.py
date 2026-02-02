@@ -908,3 +908,111 @@ def get_campaign(campaign_id: str) -> Optional[MasterCampaign]:
         banner_large_url=str(row[6] or ""),
         banner_target_url=str(row[7] or ""),
     )
+
+
+
+# =============================================================================
+# FieldRep fetch (MASTER DB) — robust override
+# Appended at end intentionally (does not remove any existing code).
+# =============================================================================
+
+@dataclass(frozen=True)
+class MasterFieldRep:
+    id: int
+    full_name: str
+    phone_number: str
+    is_active: bool
+    brand_supplied_field_rep_id: str = ""
+
+
+def get_field_rep(field_rep_id: str) -> Optional[MasterFieldRep]:
+    """
+    Robust FieldRep lookup against MASTER DB.
+
+    Supports:
+      - numeric pk id (e.g. "12")
+      - brand_supplied_field_rep_id (e.g. "FR09")
+      - token-style ids (e.g. "fieldrep_12")
+
+    Reads from settings:
+      MASTER_DB_FIELD_REP_TABLE (default campaign_fieldrep)
+      MASTER_DB_FIELD_REP_PK_COLUMN (default id)
+      MASTER_DB_FIELD_REP_ACTIVE_COLUMN (default is_active)
+      MASTER_DB_FIELD_REP_FULL_NAME_COLUMN (default full_name)
+      MASTER_DB_FIELD_REP_PHONE_COLUMN (default phone_number)
+      MASTER_DB_FIELD_REP_EXTERNAL_ID_COLUMN (default brand_supplied_field_rep_id)
+    """
+    raw = (field_rep_id or "").strip()
+    if not raw:
+        return None
+
+    # Extract trailing digits from token-style inputs like "fieldrep_12"
+    m = re.search(r"(\d+)$", raw)
+    numeric_candidate = m.group(1) if m else ""
+    is_numeric = raw.isdigit() or bool(numeric_candidate)
+
+    conn = get_master_connection()
+
+    table = getattr(settings, "MASTER_DB_FIELD_REP_TABLE", "campaign_fieldrep")
+    pk_col = getattr(settings, "MASTER_DB_FIELD_REP_PK_COLUMN", "id")
+    active_col = getattr(settings, "MASTER_DB_FIELD_REP_ACTIVE_COLUMN", "is_active")
+    name_col = getattr(settings, "MASTER_DB_FIELD_REP_FULL_NAME_COLUMN", "full_name")
+    phone_col = getattr(settings, "MASTER_DB_FIELD_REP_PHONE_COLUMN", "phone_number")
+    ext_col = getattr(settings, "MASTER_DB_FIELD_REP_EXTERNAL_ID_COLUMN", "brand_supplied_field_rep_id")
+
+    # 1) Try primary key lookup if numeric
+    if is_numeric:
+        try:
+            pk = int(raw) if raw.isdigit() else int(numeric_candidate)
+        except Exception:
+            pk = None
+
+        if pk is not None:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(active_col)}, {qn(ext_col)}
+                        FROM {qn(table)}
+                        WHERE {qn(pk_col)} = %s
+                        LIMIT 1
+                        """,
+                        [pk],
+                    )
+                    row = cur.fetchone()
+                if row:
+                    return MasterFieldRep(
+                        id=int(row[0]),
+                        full_name=str(row[1] or "").strip(),
+                        phone_number=str(row[2] or "").strip(),
+                        is_active=bool(int(row[3] or 0)) if str(row[3] or "").isdigit() else bool(row[3]),
+                        brand_supplied_field_rep_id=str(row[4] or "").strip(),
+                    )
+            except Exception as ex:
+                _log_db_exc("master_db.get_field_rep.pk_lookup_error", field_rep_id=raw, error=f"{type(ex).__name__}: {ex}")
+
+    # 2) Try external brand-supplied id lookup (FR09 etc)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(active_col)}, {qn(ext_col)}
+                FROM {qn(table)}
+                WHERE {qn(ext_col)} = %s
+                LIMIT 1
+                """,
+                [raw],
+            )
+            row = cur.fetchone()
+        if row:
+            return MasterFieldRep(
+                id=int(row[0]),
+                full_name=str(row[1] or "").strip(),
+                phone_number=str(row[2] or "").strip(),
+                is_active=bool(int(row[3] or 0)) if str(row[3] or "").isdigit() else bool(row[3]),
+                brand_supplied_field_rep_id=str(row[4] or "").strip(),
+            )
+    except Exception as ex:
+        _log_db_exc("master_db.get_field_rep.external_lookup_error", field_rep_id=raw, error=f"{type(ex).__name__}: {ex}")
+
+    return None
