@@ -28,491 +28,126 @@ _master_logger = logging.getLogger("accounts.master_db")
 _MASTER_CONN_LOGGED = False
 
 
-def _mask_email_for_log(email: str) -> str:
-    e = (email or "").strip().lower()
-    if "@" not in e:
-        return (e[:2] + "***") if e else ""
-    u, d = e.split("@", 1)
-    return f"{(u[:2] + '***') if len(u) >= 2 else '***'}@{d}"
-
-
-def _mask_phone_for_log(phone: str) -> str:
-    digits = re.sub(r"\D", "", str(phone or ""))
-    return (f"***{digits[-4:]}") if len(digits) > 4 else ("***" if digits else "")
-
-
-def _conn_info(conn) -> dict:
-    d = getattr(conn, "settings_dict", {}) or {}
-    return {
-        "ENGINE": d.get("ENGINE"),
-        "NAME": d.get("NAME"),
-        "HOST": d.get("HOST"),
-        "PORT": d.get("PORT"),
-        "USER": d.get("USER"),
-    }
-
-
-def _log_db(event: str, level: str = "info", **fields) -> None:
-    msg = json.dumps({"ts": int(time.time()), "event": event, **fields}, default=str, ensure_ascii=False)
-    if level == "debug":
-        _master_logger.debug(msg)
-    elif level == "warning":
-        _master_logger.warning(msg)
-    elif level == "error":
-        _master_logger.error(msg)
-    else:
-        _master_logger.info(msg)
-
-
-def _log_db_exc(event: str, **fields) -> None:
-    _master_logger.exception(
-        json.dumps({"ts": int(time.time()), "event": event, **fields}, default=str, ensure_ascii=False)
-    )
-
-
-class MasterDBNotConfigured(RuntimeError):
-    pass
-
-
 def master_alias() -> str:
-    return getattr(settings, "MASTER_DB_ALIAS", "master")
+    return getattr(settings, "MASTER_DB_ALIAS", "MASTER_DB_ALIAS")
 
 
 def get_master_connection():
+    global _MASTER_CONN_LOGGED
     alias = master_alias()
-    if alias not in connections.databases:
-        raise MasterDBNotConfigured(
-            f"MASTER DB alias '{alias}' is not configured in settings.DATABASES."
-        )
-    return connections[alias]
+    conn = connections[alias]
+
+    # lightweight one-time log (helps ops confirm which alias is used)
+    if not _MASTER_CONN_LOGGED:
+        _master_logger.info("MASTER DB connection alias=%s vendor=%s", alias, getattr(conn, "vendor", None))
+        _MASTER_CONN_LOGGED = True
+
+    return conn
+
+
+def _log_db(event: str, **kwargs):
+    try:
+        _master_logger.info("%s %s", event, json.dumps(kwargs, default=str))
+    except Exception:
+        _master_logger.info("%s %s", event, kwargs)
+
+
+def _log_db_exc(event: str, **kwargs):
+    try:
+        _master_logger.exception("%s %s", event, json.dumps(kwargs, default=str))
+    except Exception:
+        _master_logger.exception("%s %s", event, kwargs)
 
 
 def qn(name: str) -> str:
-    """
-    Quote identifiers safely per backend.
-    Supports schema-qualified names like: schema.table
-    """
+    """Quote names for the current master connection."""
     conn = get_master_connection()
-    parts = [p for p in (name or "").split(".") if p]
-    if len(parts) > 1:
-        return ".".join(conn.ops.quote_name(p) for p in parts)
     return conn.ops.quote_name(name)
 
 
-# -------------------------------
-# WhatsApp helpers
-# -------------------------------
-
 def normalize_wa_for_lookup(raw: str) -> str:
-    s = re.sub(r"\D", "", str(raw or ""))
-    if len(s) == 12 and s.startswith("91"):
-        return s[2:]
-    return s
+    if raw is None:
+        return ""
+    digits = re.sub(r"\D", "", str(raw))
+    # Keep last 10 digits for Indian numbers
+    if len(digits) > 10:
+        digits = digits[-10:]
+    return digits
 
 
-def wa_link_number(raw: str, default_country_code: str = "91") -> str:
-    s = re.sub(r"\D", "", str(raw or ""))
-    if len(s) == 10:
-        return f"{default_country_code}{s}"
-    if s.startswith("0") and len(s) == 11:
-        return f"{default_country_code}{s[1:]}"
-    return s
+def _normalize_uuid_for_mysql(value: str) -> str:
+    """UUID -> 32hex without hyphens."""
+    return (value or "").strip().replace("-", "")
 
 
-def build_whatsapp_deeplink(raw_phone: str, message: str) -> str:
-    phone = wa_link_number(raw_phone)
-    return f"https://wa.me/{phone}?text={quote(message or '')}"
+# -----------------------------------------------------------------------------
+# MASTER enrollment table discovery (legacy)
+# -----------------------------------------------------------------------------
 
-
-# -------------------------------
-# MASTER: AuthorizedPublisher
-# -------------------------------
-# accounts/master_db.py
-
-def authorized_publisher_exists(email: str) -> bool:
-    """
-    Checks AuthorizedPublisher in MASTER DB.
-
-    FIX:
-      - Never raises (missing table/column previously caused 401 with no clarity)
-      - Tries configured table first, then a small list of common fallback table names
-      - Logs clear diagnostics (without leaking full email)
-
-    NOTE:
-      You should still set settings.MASTER_DB_AUTH_PUBLISHER_TABLE and
-      settings.MASTER_DB_AUTH_PUBLISHER_EMAIL_COLUMN correctly.
-      This fallback is to prevent silent breakage during schema drift.
-    """
-    e = (email or "").strip().lower()
-    if not e:
-        _log_db("publisher_auth.empty_email", level="warning")
-        return False
-
-    conn = get_master_connection()
-
-    # Configured values (may be wrong in deployments)
-    cfg_table = getattr(settings, "MASTER_DB_AUTH_PUBLISHER_TABLE", "publisher_authorizedpublisher")
-    cfg_col = getattr(settings, "MASTER_DB_AUTH_PUBLISHER_EMAIL_COLUMN", "email")
-
-    # Common fallbacks (safe to try)
-    candidates = [
-        (cfg_table, cfg_col),
-        ("campaign_authorizedpublisher", "email"),
-        ("publisher_authorizedpublisher", "email"),
-        ("authorized_publisher", "email"),
-        ("authorizedpublisher", "email"),
-    ]
-
-    masked = _mask_email_for_log(e)
-
-    last_err = None
-    for table, col in candidates:
-        try:
-            sql = f"SELECT 1 FROM {qn(table)} WHERE LOWER({qn(col)}) = LOWER(%s) LIMIT 1"
-            with conn.cursor() as cur:
-                cur.execute(sql, [e])
-                ok = cur.fetchone() is not None
-
-            _log_db(
-                "publisher_auth.check",
-                email=masked,
-                table=str(table),
-                col=str(col),
-                ok=bool(ok),
-            )
-            if ok:
-                return True
-
-        except Exception as ex:
-            # Table/column may not exist or permission error
-            last_err = f"{type(ex).__name__}: {ex}"
-            _log_db(
-                "publisher_auth.check_error",
-                level="warning",
-                email=masked,
-                table=str(table),
-                col=str(col),
-                error=last_err[:500],
-            )
-            continue
-
-    _log_db(
-        "publisher_auth.not_found",
-        level="warning",
-        email=masked,
-        configured_table=str(cfg_table),
-        configured_col=str(cfg_col),
-        last_error=(last_err[:500] if last_err else ""),
-    )
-    return False
-
-
-
-# -------------------------------
-# MASTER: FieldRep
-# -------------------------------
-
-@dataclass(frozen=True)
-class MasterFieldRep:
-    id: str
-    full_name: str
-    phone_number: str
-    brand_supplied_field_rep_id: str
-    is_active: bool
-
-
-# -------------------------------
-# MASTER: Campaign
-# -------------------------------
-
-@dataclass(frozen=True)
-class MasterCampaign:
-    campaign_id: str
-    doctors_supported: int
-    wa_addition: str
-    new_video_cluster_name: str
-    email_registration: str
-
-    # NEW (MASTER DB stores these)
-    banner_small_url: str = ""
-    banner_large_url: str = ""
-    banner_target_url: str = ""
-
-
-def get_campaign(campaign_id: str) -> Optional[MasterCampaign]:
-    cid_raw = (campaign_id or "").strip()
-    if not cid_raw:
-        return None
-
-    cid_norm = cid_raw.replace("-", "")
-    conn = get_master_connection()
-
-    table = getattr(settings, "MASTER_DB_CAMPAIGN_TABLE", "campaign_campaign")
-    id_col = getattr(settings, "MASTER_DB_CAMPAIGN_ID_COLUMN", "id")
-
-    ds_col = getattr(settings, "MASTER_DB_CAMPAIGN_DOCTORS_SUPPORTED_COLUMN", "num_doctors_supported")
-    wa_col = getattr(settings, "MASTER_DB_CAMPAIGN_WA_ADDITION_COLUMN", "add_to_campaign_message")
-    vc_col = getattr(settings, "MASTER_DB_CAMPAIGN_VIDEO_CLUSTER_COLUMN", "name")
-    er_col = getattr(settings, "MASTER_DB_CAMPAIGN_EMAIL_REGISTRATION_COLUMN", "register_message")
-
-    bs_col = getattr(settings, "MASTER_DB_CAMPAIGN_BANNER_SMALL_URL_COLUMN", "banner_small_url")
-    bl_col = getattr(settings, "MASTER_DB_CAMPAIGN_BANNER_LARGE_URL_COLUMN", "banner_large_url")
-    bt_col = getattr(settings, "MASTER_DB_CAMPAIGN_BANNER_TARGET_URL_COLUMN", "banner_target_url")
-
-    sql_with_banners = (
-        f"SELECT {qn(id_col)}, {qn(ds_col)}, {qn(wa_col)}, {qn(vc_col)}, {qn(er_col)}, {qn(bs_col)}, {qn(bl_col)}, {qn(bt_col)} "
-        f"FROM {qn(table)} "
-        f"WHERE {qn(id_col)} = %s OR {qn(id_col)} = %s "
-        f"LIMIT 1"
-    )
-
-    sql_legacy = (
-        f"SELECT {qn(id_col)}, {qn(ds_col)}, {qn(wa_col)}, {qn(vc_col)}, {qn(er_col)} "
-        f"FROM {qn(table)} "
-        f"WHERE {qn(id_col)} = %s OR {qn(id_col)} = %s "
-        f"LIMIT 1"
-    )
-
-    row = None
-    with conn.cursor() as cur:
-        try:
-            cur.execute(sql_with_banners, [cid_norm, cid_raw])
-            row = cur.fetchone()
-            if row:
-                try:
-                    doctors_supported = int(row[1] or 0)
-                except Exception:
-                    doctors_supported = 0
-
-                return MasterCampaign(
-                    campaign_id=str(row[0] or "").strip(),
-                    doctors_supported=doctors_supported,
-                    wa_addition=str(row[2] or ""),
-                    new_video_cluster_name=str(row[3] or ""),
-                    email_registration=str(row[4] or ""),
-                    banner_small_url=str(row[5] or ""),
-                    banner_large_url=str(row[6] or ""),
-                    banner_target_url=str(row[7] or ""),
-                )
-        except Exception:
-            # If banner columns are missing in schema, fall back
-            row = None
-
-        cur.execute(sql_legacy, [cid_norm, cid_raw])
-        row = cur.fetchone()
-
-    if not row:
-        return None
-
-    try:
-        doctors_supported = int(row[1] or 0)
-    except Exception:
-        doctors_supported = 0
-
-    return MasterCampaign(
-        campaign_id=str(row[0] or "").strip(),
-        doctors_supported=doctors_supported,
-        wa_addition=str(row[2] or ""),
-        new_video_cluster_name=str(row[3] or ""),
-        email_registration=str(row[4] or ""),
-    )
-
-# -------------------------------
-# MASTER: Doctor & Enrollment (as before)
-# -------------------------------
-
-@dataclass(frozen=True)
-class MasterDoctor:
-    doctor_id: str
-    first_name: str = ""
-    last_name: str = ""
-    email: str = ""
-    whatsapp_no: str = ""
-
-    @property
-    def full_name(self) -> str:
-        return (f"{self.first_name} {self.last_name}").strip()
-
-
-def doctor_id_exists(doctor_id: str) -> bool:
-    did = (doctor_id or "").strip()
-    if not did:
-        return False
-    alias = master_alias()
-    return RedflagsDoctor.objects.using(alias).filter(doctor_id=did).exists()
-
-
-
-
-def get_doctor_by_whatsapp(whatsapp_no: str) -> Optional[MasterDoctor]:
-    """
-    Lookup doctor in MASTER DB by WhatsApp number from table redflags_doctor.
-
-    Handles common formatting:
-      - 10 digit
-      - 91 + 10 digit
-      - +91 + 10 digit
-      - 0 + 10 digit
-      - mixed formatting with spaces/dashes
-
-    Returns MasterDoctor or None.
-    """
-    import re
-
-    raw = (whatsapp_no or "").strip()
-    digits = re.sub(r"\D", "", raw)
-
-    if not digits:
-        return None
-
-    # Normalize down to 10 digits where possible
-    base10 = digits
-    if len(base10) == 12 and base10.startswith("91"):
-        base10 = base10[2:]
-    elif len(base10) == 11 and base10.startswith("0"):
-        base10 = base10[1:]
-    elif len(base10) > 10:
-        # last 10 digits is often the actual number
-        base10 = base10[-10:]
-
-    candidates = []
-    seen = set()
-
-    def _add(x: str) -> None:
-        x = (x or "").strip()
-        if x and x not in seen:
-            seen.add(x)
-            candidates.append(x)
-
-    # Add candidates in likely-match order
-    _add(base10)                 # 10-digit
-    _add("91" + base10)          # 91XXXXXXXXXX
-    _add("+91" + base10)         # +91XXXXXXXXXX
-    _add("0" + base10)           # 0XXXXXXXXXX
-    _add(digits)                 # original digits-only form (fallback)
-
-    conn = get_master_connection()
-
-    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "redflags_doctor")
-    id_col = getattr(settings, "MASTER_DB_DOCTOR_ID_COLUMN", "doctor_id")
-    fn_col = getattr(settings, "MASTER_DB_DOCTOR_FIRST_NAME_COLUMN", "first_name")
-    ln_col = getattr(settings, "MASTER_DB_DOCTOR_LAST_NAME_COLUMN", "last_name")
-    email_col = getattr(settings, "MASTER_DB_DOCTOR_EMAIL_COLUMN", "email")
-    wa_col = getattr(settings, "MASTER_DB_DOCTOR_WHATSAPP_COLUMN", "whatsapp_no")
-
-    where = " OR ".join([f"{qn(wa_col)} = %s"] * len(candidates))
-    sql = (
-        f"SELECT {qn(id_col)}, {qn(fn_col)}, {qn(ln_col)}, {qn(email_col)}, {qn(wa_col)} "
-        f"FROM {qn(table)} "
-        f"WHERE {where} "
-        f"LIMIT 1"
-    )
-
-    with conn.cursor() as cur:
-        cur.execute(sql, candidates)
-        row = cur.fetchone()
-
-    if not row:
-        return None
-
-    return MasterDoctor(
-        doctor_id=str(row[0] or "").strip(),
-        first_name=str(row[1] or "").strip(),
-        last_name=str(row[2] or "").strip(),
-        email=str(row[3] or "").strip(),
-        whatsapp_no=str(row[4] or "").strip(),
-    )
-
-
-
-from typing import Dict, List, Optional, Tuple
-
-_ENROLLMENT_META_CACHE: Optional[Dict[str, str]] = None
+_ENROLLMENT_META_CACHE: Optional[dict] = None
 
 
 def _db_schema_name(conn) -> str:
-    return (conn.settings_dict.get("NAME") or "").strip()
+    """
+    Determine current DB/schema name for INFORMATION_SCHEMA queries.
+    """
+    try:
+        # MySQL
+        return conn.settings_dict.get("NAME") or ""
+    except Exception:
+        return ""
 
 
-def _table_exists(conn, table_name: str) -> bool:
+def _table_exists(conn, table: str) -> bool:
     schema = _db_schema_name(conn)
-    if not schema or not table_name:
+    if not schema:
         return False
     sql = """
         SELECT 1
-        FROM information_schema.tables
-        WHERE table_schema = %s AND table_name = %s
+        FROM INFORMATION_SCHEMA.TABLES
+        WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
         LIMIT 1
     """
-    with conn.cursor() as cur:
-        cur.execute(sql, [schema, table_name])
-        return cur.fetchone() is not None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, [schema, table])
+            return cur.fetchone() is not None
+    except Exception:
+        return False
 
 
-def _find_table_by_patterns(conn, patterns: List[str]) -> Optional[str]:
-    """
-    Find the first table whose name matches any of the LIKE patterns (case-insensitive).
-    """
+def _get_table_columns(conn, table: str) -> list[str]:
     schema = _db_schema_name(conn)
     if not schema:
-        return None
-
+        return []
     sql = """
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = %s AND LOWER(table_name) LIKE %s
-        ORDER BY LENGTH(table_name) ASC, table_name ASC
-        LIMIT 1
-    """
-
-    for pat in patterns:
-        with conn.cursor() as cur:
-            cur.execute(sql, [schema, pat.lower()])
-            row = cur.fetchone()
-        if row and row[0]:
-            return str(row[0])
-    return None
-
-
-def _get_table_columns(conn, table_name: str) -> List[str]:
-    schema = _db_schema_name(conn)
-    sql = """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_schema = %s AND table_name = %s
+        SELECT COLUMN_NAME
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
+        ORDER BY ORDINAL_POSITION
     """
     with conn.cursor() as cur:
-        cur.execute(sql, [schema, table_name])
-        rows = cur.fetchall()
-    return [str(r[0]) for r in (rows or []) if r and r[0]]
+        cur.execute(sql, [schema, table])
+        rows = cur.fetchall() or []
+    return [r[0] for r in rows if r and r[0]]
 
 
-def _pick_first_column(cols: List[str], candidates: List[str]) -> Optional[str]:
-    cols_l = {c.lower(): c for c in cols}
+def _pick_first_column(cols: list[str], candidates: list[str]) -> str:
+    """
+    Return first candidate that exists in cols (case-insensitive).
+    """
+    low = {c.lower(): c for c in cols}
     for cand in candidates:
-        if cand.lower() in cols_l:
-            return cols_l[cand.lower()]
-    return None
+        if cand.lower() in low:
+            return low[cand.lower()]
+    return ""
 
 
-def _normalize_uuid_for_mysql(raw: str) -> str:
+def _get_enrollment_meta() -> dict:
     """
-    MySQL Django UUIDField commonly stored as CHAR(32) without hyphens.
-    """
-    return (raw or "").strip().replace("-", "")
-
-
-def _get_enrollment_meta() -> Dict[str, str]:
-    """
-    Discover enrollment table + columns once per process and cache.
-
-    Returns dict:
-      {
-        "table": <table_name>,
-        "campaign_col": <campaign_column_name>,
-        "doctor_col": <doctor_column_name>,
-        "registered_by_col": <optional column name or "">,
-      }
+    Legacy discovery path (kept for compatibility).
+    This is NOT sufficient for campaign_doctorcampaignenrollment schema,
+    but we keep it as a fallback if campaign_* tables are absent.
     """
     global _ENROLLMENT_META_CACHE
     if _ENROLLMENT_META_CACHE is not None:
@@ -520,102 +155,93 @@ def _get_enrollment_meta() -> Dict[str, str]:
 
     conn = get_master_connection()
 
-    # If you hardcoded an explicit table in settings, prefer it.
-    explicit_table = (getattr(settings, "MASTER_DB_ENROLLMENT_TABLE", "") or "").strip()
-    if explicit_table and _table_exists(conn, explicit_table):
-        table = explicit_table
-    else:
-        # Auto-discover by Django model naming patterns
-        patterns = [
-            "%doctorcampaignenrollment%",
-            "%doctor_campaign_enrollment%",
-            "%campaignenrollment%",
-            "%enrolment%",  # UK spelling fallback
-        ]
-        table = _find_table_by_patterns(conn, patterns)
+    # Default to the known Django table name if present
+    candidate_tables = [
+        getattr(settings, "MASTER_DB_ENROLLMENT_TABLE", ""),
+        "campaign_doctorcampaignenrollment",
+        "campaign_doctor_campaigns",
+    ]
+    candidate_tables = [t for t in candidate_tables if t]
+
+    table = ""
+    for t in candidate_tables:
+        if _table_exists(conn, t):
+            table = t
+            break
 
     if not table:
-        raise RuntimeError(
-            "Enrollment table not found in master DB. "
-            "Create/migrate the enrollment model or set settings.MASTER_DB_ENROLLMENT_TABLE explicitly."
-        )
+        # As a last resort, keep old behavior: assume it exists
+        table = getattr(settings, "MASTER_DB_ENROLLMENT_TABLE", "campaign_doctorcampaignenrollment")
 
     cols = _get_table_columns(conn, table)
-    if not cols:
-        raise RuntimeError(f"Could not read columns for enrollment table '{table}' in master DB.")
 
-    # Common Django FK column naming: campaign_id, doctor_id, registered_by_id
-    campaign_col = _pick_first_column(cols, ["campaign_id", "campaign", "campaign_uuid"])
-    doctor_col = _pick_first_column(cols, ["doctor_id", "doctor", "doctor_uuid"])
+    # Heuristics
+    doctor_col = _pick_first_column(cols, ["doctor_id", "doctor", "redflags_doctor_id", "doctor_code"])
+    campaign_col = _pick_first_column(cols, ["campaign_id", "campaign"])
+    registered_by_col = _pick_first_column(cols, ["registered_by_id", "registered_by", "field_rep_id"])
 
-    # registered_by may be FK to FieldRep => registered_by_id
-    registered_by_col = _pick_first_column(
-        cols,
-        ["registered_by_id", "registered_by", "field_rep_id", "fieldrep_id"],
-    )
-
-    if not campaign_col or not doctor_col:
-        raise RuntimeError(
-            f"Enrollment table '{table}' does not have expected columns. "
-            f"Found columns: {cols}"
-        )
+    if not doctor_col:
+        doctor_col = "doctor_id"
+    if not campaign_col:
+        campaign_col = "campaign_id"
 
     _ENROLLMENT_META_CACHE = {
         "table": table,
-        "campaign_col": campaign_col,
         "doctor_col": doctor_col,
-        "registered_by_col": registered_by_col or "",
+        "campaign_col": campaign_col,
+        "registered_by_col": registered_by_col,
     }
-
-    print(json.dumps({
-        "ts": int(time.time()),
-        "event": "master_db.enrollment_meta.discovered",
-        "table": table,
-        "campaign_col": campaign_col,
-        "doctor_col": doctor_col,
-        "registered_by_col": registered_by_col or "",
-    }, default=str))
-
     return _ENROLLMENT_META_CACHE
 
 
-def count_campaign_enrollments(campaign_id: str) -> int:
-    """
-    Count doctors enrolled for a campaign in MASTER DB.
-    Tries both hyphenated and non-hyphenated UUID formats.
-    """
-    meta = _get_enrollment_meta()
-    table = meta["table"]
-    campaign_col = meta["campaign_col"]
+# -----------------------------------------------------------------------------
+# Doctor lookup helpers
+# -----------------------------------------------------------------------------
 
-    cid_raw = (campaign_id or "").strip()
-    if not cid_raw:
-        return 0
-
-    cid_norm = _normalize_uuid_for_mysql(cid_raw)
-
-    conn = get_master_connection()
-
-    sql = f"SELECT COUNT(*) FROM {qn(table)} WHERE {qn(campaign_col)} = %s"
-
-    counts = []
-    with conn.cursor() as cur:
-        # normalized (CHAR32)
-        cur.execute(sql, [cid_norm])
-        row = cur.fetchone()
-        counts.append(int(row[0] or 0))
-
-        # raw (hyphenated) only if different
-        if cid_raw != cid_norm:
-            cur.execute(sql, [cid_raw])
-            row = cur.fetchone()
-            counts.append(int(row[0] or 0))
-
-    return max(counts) if counts else 0
+@dataclass
+class MasterDoctor:
+    doctor_id: str
+    email: str
+    whatsapp_no: str
 
 
+def find_doctor_by_email_or_whatsapp(*, email: str, whatsapp_no: str) -> Optional[MasterDoctor]:
+    alias = master_alias()
+    email = (email or "").strip().lower()
+    wa = normalize_wa_for_lookup(whatsapp_no)
 
-def insert_doctor_row(
+    if not email and not wa:
+        return None
+
+    qs = RedflagsDoctor.objects.using(alias).all()
+
+    q = Q()
+    if email:
+        q |= Q(email__iexact=email)
+    if wa:
+        q |= Q(whatsapp_no__endswith=wa)
+
+    row = qs.filter(q).only("doctor_id", "email", "whatsapp_no").first()
+    if not row:
+        return None
+
+    return MasterDoctor(
+        doctor_id=str(row.doctor_id),
+        email=str(row.email or ""),
+        whatsapp_no=str(row.whatsapp_no or ""),
+    )
+
+
+# -----------------------------------------------------------------------------
+# Doctor create/update in MASTER redflags_doctor
+# -----------------------------------------------------------------------------
+
+def create_master_doctor_id() -> str:
+    # DR + 6 digits (simple)
+    return f"DR{secrets.randbelow(900000) + 100000}"
+
+
+def insert_redflags_doctor(
     *,
     doctor_id: str,
     first_name: str,
@@ -632,14 +258,11 @@ def insert_doctor_row(
     whatsapp_no: str,
     receptionist_whatsapp_number: str,
     photo_path: str,
-    field_rep_id: str = "",
-    recruited_via: str = "FIELD_REP",
+    field_rep_id: str,
+    recruited_via: str,
 ) -> None:
     conn = get_master_connection()
-    table = getattr(settings, "MASTER_DB_DOCTOR_TABLE", "Doctor")
-
-    _log_db("master_db.doctor.insert.start", doctor_id=doctor_id, email=_mask_email_for_log(email),
-            whatsapp=_mask_phone_for_log(whatsapp_no), table=table)
+    table = "redflags_doctor"
 
     cols = (
         "doctor_id",
@@ -688,48 +311,41 @@ def insert_doctor_row(
         _log_db("master_db.doctor.insert.ok", doctor_id=doctor_id, rowcount=getattr(cur, "rowcount", None))
 
 
-def ensure_enrollment(*, doctor_id: str, campaign_id: str, registered_by: str) -> None:
-    """
-    Insert enrollment row in MASTER DB (MySQL) if not already present.
-    Uses INSERT IGNORE to avoid duplicate key failures (if unique constraint exists).
-    """
+# -----------------------------------------------------------------------------
+# Campaign enrollment (FIXED)
+# -----------------------------------------------------------------------------
 
-    _log_db("master_db.enrollment.ensure.start", doctor_id=doctor_id, campaign_id=campaign_id)
+def _campaign_exists(conn, campaign_id_norm: str) -> bool:
+    """Returns True if campaign exists in MASTER campaign_campaign."""
+    cid = (campaign_id_norm or "").strip()
+    if not cid:
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT 1 FROM {qn('campaign_campaign')} WHERE {qn('id')}=%s LIMIT 1",
+                [cid],
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        return False
 
 
-    if not (doctor_id and campaign_id):
-        return
-
-    meta = _get_enrollment_meta()
-    table = meta["table"]
-    doctor_col = meta["doctor_col"]
-    campaign_col = meta["campaign_col"]
-    registered_by_col = meta.get("registered_by_col") or ""
-
-    cid_raw = (campaign_id or "").strip()
-    cid_norm = _normalize_uuid_for_mysql(cid_raw)
-
-    cols = [doctor_col, campaign_col]
-    vals = [doctor_id, cid_norm]
-
-    if registered_by_col:
-        cols.append(registered_by_col)
-        vals.append(registered_by or "")
-
-    placeholders = ", ".join(["%s"] * len(cols))
-    sql = f"INSERT IGNORE INTO {qn(table)} ({', '.join(qn(c) for c in cols)}) VALUES ({placeholders})"
-
-    conn = get_master_connection()
-    with conn.cursor() as cur:
-        cur.execute(sql, vals)
-        _log_db("master_db.enrollment.ensure.done", doctor_id=doctor_id, campaign_id=cid_norm,
-                rowcount=getattr(cur, "rowcount", None))
-
+def _row_exists_by_id(conn, table: str, row_id: int, *, id_col: str = "id") -> bool:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT 1 FROM {qn(table)} WHERE {qn(id_col)}=%s LIMIT 1",
+                [int(row_id)],
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        return False
 
 
 def normalize_campaign_id(campaign_id: str) -> str:
     """
-    Your join table stores campaign_id WITHOUT hyphens:
+    MASTER join tables store campaign_id WITHOUT hyphens:
       7ea0883d97914703b569c1f9f8d25705
     but URLs pass UUID with hyphens:
       7ea0883d-9791-4703-b569-c1f9f8d25705
@@ -771,344 +387,324 @@ def get_campaign_fieldrep_link_fieldrep_id(*, campaign_id: str, link_pk: int) ->
         return None
 
 
-def is_fieldrep_linked_to_campaign(*, campaign_id: str, field_rep_id: int) -> bool:
+def _resolve_registered_by_fieldrep_id(conn, *, campaign_id_norm: str, registered_by: str) -> Optional[int]:
     """
-    Enforce that the field rep is allowed for this campaign (join table must contain row).
+    Resolve `registered_by` (from URL/form) to MASTER campaign_fieldrep.id if possible.
+
+    Supported real-world inputs:
+      - "15" (fieldrep id OR join-table pk)
+      - "fieldrep_15" (token style)
     """
-    conn = get_master_connection()
-
-    table = getattr(settings, "MASTER_DB_CAMPAIGN_FIELD_REP_TABLE", "campaign_campaignfieldrep")
-    campaign_col = getattr(settings, "MASTER_DB_CAMPAIGN_FIELD_REP_CAMPAIGN_COLUMN", "campaign_id")
-    fr_col = getattr(settings, "MASTER_DB_CAMPAIGN_FIELD_REP_FIELD_REP_COLUMN", "field_rep_id")
-
-    cid = normalize_campaign_id(campaign_id)
-    sql = (
-        f"SELECT 1 FROM {qn(table)} "
-        f"WHERE {qn(campaign_col)} = %s AND {qn(fr_col)} = %s "
-        f"LIMIT 1"
-    )
-
-    with conn.cursor() as cur:
-        cur.execute(sql, [cid, int(field_rep_id)])
-        return cur.fetchone() is not None
-
-
-def get_field_rep(field_rep_id: str) -> Optional[MasterFieldRep]:
-    """
-    Deterministic FieldRep lookup.
-
-    Priority:
-      1) brand_supplied_field_rep_id exact match (string)
-      2) id (pk) match if numeric (or trailing digits)
-      3) user_id match if numeric (or trailing digits)
-
-    This prevents the bug where id=15 accidentally returns the row whose user_id=15.
-    """
-    fid_raw = (field_rep_id or "").strip()
-    if not fid_raw:
+    raw = (registered_by or "").strip()
+    if not raw:
         return None
 
-    # pull trailing digits e.g. "fieldrep_15" -> 15
-    tail_digits = None
-    m = re.search(r"(\d+)$", fid_raw)
-    if m:
-        try:
-            tail_digits = int(m.group(1))
-        except Exception:
-            tail_digits = None
-
-    conn = get_master_connection()
-
-    table = getattr(settings, "MASTER_DB_FIELD_REP_TABLE", "campaign_fieldrep")
-    pk_col = getattr(settings, "MASTER_DB_FIELD_REP_PK_COLUMN", "id")
-    user_id_col = getattr(settings, "MASTER_DB_FIELD_REP_USER_ID_COLUMN", "user_id")
-    ext_col = getattr(settings, "MASTER_DB_FIELD_REP_EXTERNAL_ID_COLUMN", "brand_supplied_field_rep_id")
-    active_col = getattr(settings, "MASTER_DB_FIELD_REP_ACTIVE_COLUMN", "is_active")
-    name_col = getattr(settings, "MASTER_DB_FIELD_REP_FULL_NAME_COLUMN", "full_name")
-    phone_col = getattr(settings, "MASTER_DB_FIELD_REP_PHONE_COLUMN", "phone_number")
-
-    def _row_to_obj(row):
-        return MasterFieldRep(
-            id=str(row[0]),
-            full_name=str(row[1] or "").strip(),
-            phone_number=str(row[2] or "").strip(),
-            brand_supplied_field_rep_id=str(row[3] or "").strip(),
-            is_active=bool(row[4]),
-        )
-
-    # 1) external id exact match
-    sql_ext = (
-        f"SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(ext_col)}, {qn(active_col)} "
-        f"FROM {qn(table)} WHERE {qn(ext_col)} = %s LIMIT 1"
-    )
-    with conn.cursor() as cur:
-        cur.execute(sql_ext, [fid_raw])
-        row = cur.fetchone()
-    if row:
-        return _row_to_obj(row)
-
-    # numeric candidates: fid_raw if numeric, else trailing digits
-    num = int(fid_raw) if fid_raw.isdigit() else tail_digits
-    if num is None:
+    # Extract trailing digits (handles "fieldrep_15")
+    m = re.search(r"(\d+)$", raw)
+    if not m:
         return None
 
-    # 2) pk match FIRST
-    sql_pk = (
-        f"SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(ext_col)}, {qn(active_col)} "
-        f"FROM {qn(table)} WHERE {qn(pk_col)} = %s LIMIT 1"
-    )
-    with conn.cursor() as cur:
-        cur.execute(sql_pk, [num])
-        row = cur.fetchone()
-    if row:
-        return _row_to_obj(row)
+    try:
+        cand = int(m.group(1))
+    except Exception:
+        return None
 
-    # 3) user_id match
-    sql_uid = (
-        f"SELECT {qn(pk_col)}, {qn(name_col)}, {qn(phone_col)}, {qn(ext_col)}, {qn(active_col)} "
-        f"FROM {qn(table)} WHERE {qn(user_id_col)} = %s LIMIT 1"
-    )
-    with conn.cursor() as cur:
-        cur.execute(sql_uid, [num])
-        row = cur.fetchone()
-    if row:
-        return _row_to_obj(row)
+    # 1) direct campaign_fieldrep.id
+    if _row_exists_by_id(conn, "campaign_fieldrep", cand, id_col="id"):
+        return cand
+
+    # 2) treat as join-table pk in campaign_campaignfieldrep => resolve to field_rep_id
+    try:
+        fr_id = get_campaign_fieldrep_link_fieldrep_id(campaign_id=campaign_id_norm, link_pk=cand)
+    except Exception:
+        fr_id = None
+
+    if fr_id and _row_exists_by_id(conn, "campaign_fieldrep", int(fr_id), id_col="id"):
+        return int(fr_id)
 
     return None
 
 
-
-def resolve_field_rep_for_campaign(*, campaign_id: str, field_rep_identifier: str, token_sub: str = "") -> Optional[MasterFieldRep]:
+def _get_or_create_campaign_doctor_id(
+    conn,
+    *,
+    full_name: str,
+    email: str,
+    phone: str,
+    city: str = "",
+    state: str = "",
+) -> Optional[int]:
     """
-    The one function you should call from field_rep_landing_page.
+    Ensure a row exists in MASTER campaign_doctor and return its numeric id.
 
-    It supports the real-world situation you have:
-      - URL field_rep_id may actually be the join-table id (e.g. 56)
-      - token_sub may be "fieldrep_15"
-
-    Resolution order:
-      1) Try identifier directly in FieldRep table (id/user_id/external id)
-         and enforce join exists for campaign.
-      2) If not found, treat identifier as join-table PK:
-         resolve to actual field_rep_id, fetch FieldRep, enforce join exists.
-      3) Try token_sub (and token_sub tail digits) as fallback (same enforcement).
+    Matching:
+      - LOWER(email) exact OR RIGHT(phone, 10) match (handles +91 / 91 prefixes)
     """
-    cid = normalize_campaign_id(campaign_id)
+    email_l = (email or "").strip().lower()
+    phone_digits = re.sub(r"\D", "", str(phone or ""))
+    phone_last10 = phone_digits[-10:] if len(phone_digits) > 10 else phone_digits
 
-    # 1) direct candidates first
-    direct_candidates = [field_rep_identifier]
-    if token_sub:
-        direct_candidates.append(token_sub)
-        m = re.search(r"(\d+)$", token_sub)
-        if m:
-            direct_candidates.append(m.group(1))
+    if not email_l and not phone_last10:
+        return None
 
-    # Try direct fieldrep matches + campaign link enforcement
-    for cand in direct_candidates:
-        if not cand:
-            continue
-        fr = get_field_rep(cand)
-        if fr and fr.is_active:
+    where_parts = []
+    params = []
+
+    if email_l:
+        where_parts.append(f"LOWER({qn('email')})=%s")
+        params.append(email_l)
+
+    if phone_last10:
+        where_parts.append(f"RIGHT({qn('phone')}, 10)=%s")
+        params.append(phone_last10)
+
+    where_sql = " OR ".join(where_parts)
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT {qn('id')} FROM {qn('campaign_doctor')} WHERE {where_sql} ORDER BY {qn('id')} DESC LIMIT 1",
+                params,
+            )
+            row = cur.fetchone()
+        if row and row[0] is not None:
+            return int(row[0])
+    except Exception:
+        # fall through to create
+        pass
+
+    # Create (best-effort)
+    full_name_n = (full_name or "").strip() or (email_l or phone_last10 or "")
+    city_n = (city or "").strip()
+    state_n = (state or "").strip()
+
+    phone_store = phone_digits or (phone or "").strip()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                INSERT INTO {qn('campaign_doctor')}
+                    ({qn('full_name')}, {qn('email')}, {qn('phone')}, {qn('city')}, {qn('state')}, {qn('created_at')})
+                VALUES
+                    (%s, %s, %s, %s, %s, NOW(6))
+                """,
+                [full_name_n, email_l, phone_store, city_n, state_n],
+            )
+            return int(getattr(cur, "lastrowid", 0) or 0) or None
+    except Exception:
+        return None
+
+
+def ensure_enrollment(*, doctor_id: str, campaign_id: str, registered_by: str) -> None:
+    """
+    Ensure a doctor is enrolled into a campaign in MASTER DB.
+
+    MASTER uses:
+      1) `redflags_doctor` (login/profile) keyed by string doctor_id (e.g. DR061755)
+      2) `campaign_doctor` + `campaign_doctorcampaignenrollment` for campaign membership (doctor_id is BIGINT FK)
+
+    This function:
+      - Normalizes campaign_id (UUID -> 32-hex without hyphens)
+      - Creates/gets `campaign_doctor` row using redflags doctor email/phone
+      - Inserts into `campaign_doctorcampaignenrollment` with required NOT NULL columns
+      - Idempotent (won’t create duplicates)
+
+    Fallback:
+      - If campaign tables aren't present, uses legacy discovery path (_get_enrollment_meta).
+    """
+    _log_db("master_db.enrollment.ensure.start", doctor_id=doctor_id, campaign_id=campaign_id)
+
+    if not (doctor_id and campaign_id):
+        return
+
+    conn = get_master_connection()
+    cid_norm = normalize_campaign_id(campaign_id) or _normalize_uuid_for_mysql(campaign_id)
+
+    # Preferred path: campaign_* tables exist
+    try:
+        if _table_exists(conn, "campaign_doctor") and _table_exists(conn, "campaign_doctorcampaignenrollment") and _table_exists(conn, "campaign_campaign"):
+            if not _campaign_exists(conn, cid_norm):
+                _log_db("master_db.enrollment.skip.campaign_missing", doctor_id=doctor_id, campaign_id=cid_norm)
+                return
+
+            # Resolve numeric campaign_doctor.id
+            campaign_doctor_id: Optional[int] = None
+
+            if str(doctor_id).strip().isdigit():
+                campaign_doctor_id = int(str(doctor_id).strip())
+                if not _row_exists_by_id(conn, "campaign_doctor", campaign_doctor_id, id_col="id"):
+                    campaign_doctor_id = None
+            else:
+                alias = master_alias()
+                doc = (
+                    RedflagsDoctor.objects.using(alias)
+                    .filter(doctor_id=str(doctor_id).strip())
+                    .only("first_name", "last_name", "email", "whatsapp_no", "district", "state")
+                    .first()
+                )
+                if not doc:
+                    _log_db("master_db.enrollment.skip.redflags_doctor_missing", doctor_id=doctor_id, campaign_id=cid_norm)
+                    return
+
+                full_name = (f"{(doc.first_name or '').strip()} {(doc.last_name or '').strip()}").strip()
+                email = (doc.email or "").strip()
+                phone = (doc.whatsapp_no or "").strip()
+                city = (getattr(doc, "district", "") or "").strip()
+                state = (getattr(doc, "state", "") or "").strip()
+
+                campaign_doctor_id = _get_or_create_campaign_doctor_id(
+                    conn,
+                    full_name=full_name,
+                    email=email,
+                    phone=phone,
+                    city=city,
+                    state=state,
+                )
+
+            if not campaign_doctor_id:
+                _log_db("master_db.enrollment.skip.campaign_doctor_unresolved", doctor_id=doctor_id, campaign_id=cid_norm)
+                return
+
+            # Idempotency check
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT 1 FROM {qn('campaign_doctorcampaignenrollment')} WHERE {qn('campaign_id')}=%s AND {qn('doctor_id')}=%s LIMIT 1",
+                    [cid_norm, campaign_doctor_id],
+                )
+                if cur.fetchone() is not None:
+                    _log_db("master_db.enrollment.exists", doctor_id=doctor_id, campaign_id=cid_norm)
+                    return
+
+            # Insert enrollment row (schema: campaign_doctorcampaignenrollment).
+            # We intentionally avoid INFORMATION_SCHEMA dependency here because some DB users
+            # do not have permissions for it, but do have INSERT/SELECT permissions.
+            fr_id = _resolve_registered_by_fieldrep_id(
+                conn, campaign_id_norm=cid_norm, registered_by=registered_by
+            )
+
             try:
-                if is_fieldrep_linked_to_campaign(campaign_id=cid, field_rep_id=int(fr.id)):
-                    return fr
+                # Full schema (includes registered_by_id)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        INSERT IGNORE INTO {qn('campaign_doctorcampaignenrollment')}
+                            ({qn('whitelabel_enabled')}, {qn('whitelabel_subdomain')}, {qn('registered_at')},
+                             {qn('campaign_id')}, {qn('doctor_id')}, {qn('registered_by_id')})
+                        VALUES
+                            (%s, %s, NOW(6), %s, %s, %s)
+                        """,
+                        [1, "", cid_norm, campaign_doctor_id, fr_id],
+                    )
             except Exception:
-                # if id is non-numeric, skip link check (should not happen with your schema)
-                pass
+                # Older schema without registered_by_id (still must satisfy NOT NULL columns)
+                with conn.cursor() as cur:
+                    cur.execute(
+                        f"""
+                        INSERT IGNORE INTO {qn('campaign_doctorcampaignenrollment')}
+                            ({qn('whitelabel_enabled')}, {qn('whitelabel_subdomain')}, {qn('registered_at')},
+                             {qn('campaign_id')}, {qn('doctor_id')})
+                        VALUES
+                            (%s, %s, NOW(6), %s, %s)
+                        """,
+                        [1, "", cid_norm, campaign_doctor_id],
+                    )
 
-    # 2) treat URL identifier as join-table pk
-    if (field_rep_identifier or "").strip().isdigit():
-        link_pk = int(field_rep_identifier.strip())
-        fr_id = get_campaign_fieldrep_link_fieldrep_id(campaign_id=cid, link_pk=link_pk)
-        if fr_id:
-            fr = get_field_rep(str(fr_id))
-            if fr and fr.is_active:
-                if is_fieldrep_linked_to_campaign(campaign_id=cid, field_rep_id=fr_id):
-                    return fr
+            _log_db(
+                "master_db.enrollment.ensure.done",
+                doctor_id=doctor_id,
+                campaign_id=cid_norm,
+                campaign_doctor_id=campaign_doctor_id,
+            )
+            return
+    except Exception:
+        _log_db_exc("master_db.enrollment.ensure.error", doctor_id=doctor_id, campaign_id=campaign_id)
 
-    return None
+    # Fallback path: legacy meta-driven insert
+    try:
+        meta = _get_enrollment_meta()
+        table = meta["table"]
+        doctor_col = meta["doctor_col"]
+        campaign_col = meta["campaign_col"]
+        registered_by_col = meta.get("registered_by_col") or ""
 
+        cid_raw = (campaign_id or "").strip()
+        cid_norm = _normalize_uuid_for_mysql(cid_raw)
 
-def find_doctor_by_email_or_whatsapp(*, email: str, whatsapp: str) -> Optional[MasterDoctor]:
-    email_n = (email or "").strip().lower()
-    wa_raw = (whatsapp or "").strip()
+        cols = [doctor_col, campaign_col]
+        vals = [doctor_id, cid_norm]
 
-    # Use your existing normalization helper
-    wa_n = normalize_wa_for_lookup(wa_raw)
+        if registered_by_col:
+            cols.append(registered_by_col)
+            vals.append(registered_by or "")
 
-    if not email_n and not wa_n:
-        return None
+        placeholders = ", ".join(["%s"] * len(cols))
+        sql = f"INSERT IGNORE INTO {qn(table)} ({', '.join(qn(c) for c in cols)}) VALUES ({placeholders})"
 
-    alias = master_alias()
+        with conn.cursor() as cur:
+            cur.execute(sql, vals)
 
-    q = Q()
-    if email_n:
-        q |= Q(email__iexact=email_n)
-
-    # WhatsApp can be stored with/without country code; include a few candidates
-    if wa_n:
-        candidates = []
-        seen = set()
-
-        def _add(x: str) -> None:
-            x = (x or "").strip()
-            if x and x not in seen:
-                seen.add(x)
-                candidates.append(x)
-
-        base10 = wa_n
-        if len(base10) == 12 and base10.startswith("91"):
-            base10 = base10[2:]
-        elif len(base10) == 11 and base10.startswith("0"):
-            base10 = base10[1:]
-        elif len(base10) > 10:
-            base10 = base10[-10:]
-
-        _add(base10)
-        _add("91" + base10)
-        _add("+91" + base10)
-        _add("0" + base10)
-        _add(wa_n)
-
-        q |= Q(whatsapp_no__in=candidates)
-
-    obj = (
-        RedflagsDoctor.objects.using(alias)
-        .filter(q)
-        .only("doctor_id", "first_name", "last_name", "email", "whatsapp_no")
-        .first()
-    )
-    if not obj:
-        return None
-
-    return MasterDoctor(
-        doctor_id=str(obj.doctor_id or "").strip(),
-        first_name=str(obj.first_name or "").strip(),
-        last_name=str(obj.last_name or "").strip(),
-        email=str(obj.email or "").strip(),
-        whatsapp_no=str(obj.whatsapp_no or "").strip(),
-    )
+        _log_db("master_db.enrollment.ensure.fallback_done", doctor_id=doctor_id, campaign_id=cid_norm)
+    except Exception:
+        _log_db_exc("master_db.enrollment.ensure.fallback_error", doctor_id=doctor_id, campaign_id=campaign_id)
 
 
-
-def generate_doctor_id(prefix: str = "DR", max_tries: int = 200) -> str:
-    prefix = (prefix or "DR").upper().strip()
-    suffix_len = 8 - len(prefix)
-    if suffix_len <= 0:
-        raise ValueError("generate_doctor_id: prefix too long for an 8-char doctor_id")
-
-    digits = "0123456789"
-
-    for _ in range(max_tries):
-        did = prefix + "".join(secrets.choice(digits) for _ in range(suffix_len))
-        if not doctor_id_exists(did):
-            return did
-
-    raise RuntimeError("Unable to generate unique doctor_id in MASTER DB")
-
-
-
-
-def generate_temporary_password(length: int = 10) -> str:
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
-    return "".join(secrets.choice(alphabet) for _ in range(max(8, int(length))))
-
+# -----------------------------------------------------------------------------
+# Doctor create with enrollment
+# -----------------------------------------------------------------------------
 
 def create_doctor_with_enrollment(
     *,
-    doctor_id: str,
     first_name: str,
     last_name: str,
     email: str,
-    whatsapp: str,
+    whatsapp_no: str,
     clinic_name: str,
-    clinic_phone: str = "",
-    clinic_appointment_number: str = "",
-    clinic_address: str = "",
-    imc_number: str = "",
-    postal_code: str = "",
-    state: str = "",
-    district: str = "",
-    photo_path: str = "",
-    campaign_id: Optional[str] = None,
-    recruited_via: str = "SELF",
-    registered_by: Optional[str] = None,
-    initial_password_raw: Optional[str] = None,
-
-) -> None:
+    imc_registration_number: str,
+    clinic_phone: str,
+    clinic_appointment_number: str,
+    clinic_address: str,
+    postal_code: str,
+    state: str,
+    district: str,
+    receptionist_whatsapp_number: str,
+    photo_path: str,
+    campaign_id: str,
+    registered_by: str,
+) -> str:
     """
-    Atomically:
-      1) Insert doctor into MASTER DB using ORM (redflags_doctor)
-      2) Ensure campaign enrollment (if campaign_id provided)
-
-    IMPORTANT: no silent IntegrityError swallowing.
+    Creates doctor in MASTER redflags_doctor and enrolls into campaign tables.
+    Returns created doctor_id (DRxxxxxx).
     """
-
     alias = master_alias()
-
-    email_n = (email or "").strip().lower()
-    wa_n = normalize_wa_for_lookup(whatsapp) or (whatsapp or "").strip()
-
-    # Fill basics defensively
-    first_name = (first_name or "").strip()
-    last_name = (last_name or "").strip()
-
-    clinic_name = (clinic_name or "").strip()
-    clinic_phone = (clinic_phone or "").strip()
-    clinic_appointment_number = (clinic_appointment_number or "").strip()
-
-    clinic_address = (clinic_address or "").strip()
-    imc_number = (imc_number or "").strip()
-    postal_code = (postal_code or "").strip()
-    state = (state or "Maharashtra").strip()
-    district = (district or "").strip()
-
-    recruited_via = (recruited_via or "SELF").strip()
-    field_rep_id = (registered_by or "").strip()
-
-    pwd_hash = make_password(initial_password_raw) if initial_password_raw else ""
-    pwd_set_at = timezone.now() if initial_password_raw else None
+    doctor_id = create_master_doctor_id()
 
     with transaction.atomic(using=alias):
-        try:
-            RedflagsDoctor.objects.using(alias).create(
-                doctor_id=doctor_id,
-                first_name=first_name,
-                last_name=last_name,
-                email=email_n,
-                whatsapp_no=wa_n,
+        # Create doctor in redflags_doctor (ORM)
+        doc = RedflagsDoctor(
+            doctor_id=doctor_id,
+            first_name=(first_name or "").strip(),
+            last_name=(last_name or "").strip(),
+            email=(email or "").strip().lower(),
+            clinic_name=(clinic_name or "").strip(),
+            imc_registration_number=(imc_registration_number or "").strip(),
+            clinic_phone=(clinic_phone or "").strip(),
+            clinic_appointment_number=(clinic_appointment_number or "").strip(),
+            clinic_address=(clinic_address or "").strip(),
+            postal_code=(postal_code or "").strip(),
+            state=(state or "").strip(),
+            district=(district or "").strip(),
+            whatsapp_no=normalize_wa_for_lookup(whatsapp_no) or (whatsapp_no or "").strip(),
+            receptionist_whatsapp_number=normalize_wa_for_lookup(receptionist_whatsapp_number) or (receptionist_whatsapp_number or "").strip(),
+            photo=(photo_path or "").strip(),
+            field_rep_id=(registered_by or "").strip(),
+            recruited_via="FIELD_REP" if registered_by else "SELF",
+            password=make_password(secrets.token_urlsafe(12)),  # temp, not used if you manage separately
+        )
+        doc.save(using=alias)
 
-                clinic_name=clinic_name,
-                clinic_phone=clinic_phone,
-                clinic_appointment_number=clinic_appointment_number,
-
-                clinic_address=clinic_address,
-                postal_code=postal_code,
-                state=state,
-                district=district,
-
-                imc_registration_number=imc_number,
-                receptionist_whatsapp_number="",
-                photo=photo_path or "",
-
-                field_rep_id=field_rep_id,
-                recruited_via=recruited_via,
-
-                # NEW: initial login password in MASTER DB
-                clinic_password_hash=pwd_hash,
-                clinic_password_set_at=pwd_set_at,
-            )
-        except IntegrityError:
-            # Race/duplicate case: treat as OK only if it already exists by email/whatsapp
-            existing = find_doctor_by_email_or_whatsapp(email=email_n, whatsapp=wa_n)
-            if existing:
-                return
-            # Otherwise, it is a real insert failure; raise it.
-            raise
-
+        # Enroll into campaign tables (FIXED)
         if campaign_id:
-            ensure_enrollment(
-                doctor_id=doctor_id,
-                campaign_id=campaign_id,
-                registered_by=field_rep_id,
-            )
+            ensure_enrollment(doctor_id=doctor_id, campaign_id=campaign_id, registered_by=registered_by or "")
+
+    return doctor_id
