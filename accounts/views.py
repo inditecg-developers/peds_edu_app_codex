@@ -310,8 +310,9 @@ def register_doctor(request):
     try:
         existing_doctor_row = master_db.find_doctor_by_email_or_whatsapp(
             email=email,
-            whatsapp=whatsapp,
+            whatsapp_no=whatsapp,
         )
+
     except Exception:
         _log_exception(
             "doctor_register.master_lookup_exception",
