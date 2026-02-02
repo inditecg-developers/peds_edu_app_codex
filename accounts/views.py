@@ -213,14 +213,21 @@ def register_doctor(request):
     # GET
     # -----------------------------
     if request.method == "GET":
+        # Support marketing links that use "campaign-id" instead of "campaign_id"
+        initial = request.GET.copy()
+        if not (initial.get("campaign_id") or "").strip():
+            cid_alias = (initial.get("campaign-id") or "").strip()
+            if cid_alias:
+                initial["campaign_id"] = cid_alias
+
         _log(
             "doctor_register.get",
             request_id=request_id,
             query_keys=list(request.GET.keys()),
-            campaign_id=(request.GET.get("campaign_id") or "").strip(),
-            field_rep_id=(request.GET.get("field_rep_id") or "").strip(),
+            campaign_id=(initial.get("campaign_id") or "").strip(),
+            field_rep_id=(initial.get("field_rep_id") or "").strip(),
         )
-        form = DoctorRegistrationForm(initial=request.GET)
+        form = DoctorRegistrationForm(initial=initial)
         return render(
             request,
             "accounts/register.html",
@@ -259,10 +266,16 @@ def register_doctor(request):
     cd = form.cleaned_data
 
     email = (cd.get("email") or "").strip().lower()
-    whatsapp = (cd.get("clinic_whatsapp_number") or "").strip()
+    doctor_whatsapp = (cd.get("whatsapp_number") or "").strip()
+    clinic_whatsapp = (cd.get("clinic_whatsapp_number") or "").strip()
 
-    campaign_id = (cd.get("campaign_id") or "").strip()
-    field_rep_id = (cd.get("field_rep_id") or "").strip()
+    # campaign_id may arrive as hidden field (campaign_id) or as query param alias (campaign-id)
+    campaign_id = (
+        (cd.get("campaign_id") or "")
+        or (request.GET.get("campaign_id") or "")
+        or (request.GET.get("campaign-id") or "")
+    ).strip()
+    field_rep_id = ((cd.get("field_rep_id") or "") or (request.GET.get("field_rep_id") or "")).strip()
     recruited_via = "FIELD_REP" if field_rep_id else "SELF"
 
     postal_code = (cd.get("postal_code") or "").strip()
@@ -287,7 +300,8 @@ def register_doctor(request):
         "doctor_register.cleaned",
         request_id=request_id,
         email=_mask_email(email),
-        whatsapp=_mask_phone(whatsapp),
+        whatsapp=_mask_phone(doctor_whatsapp),
+        clinic_whatsapp=_mask_phone(clinic_whatsapp),
         campaign_id=campaign_id,
         field_rep_id=field_rep_id,
         recruited_via=recruited_via,
@@ -304,13 +318,13 @@ def register_doctor(request):
         "doctor_register.master_lookup_start",
         request_id=request_id,
         email=_mask_email(email),
-        whatsapp=_mask_phone(whatsapp),
+        whatsapp=_mask_phone(doctor_whatsapp),
     )
 
     try:
         existing_doctor_row = master_db.find_doctor_by_email_or_whatsapp(
             email=email,
-            whatsapp_no=whatsapp,
+            whatsapp_no=doctor_whatsapp,
         )
 
     except Exception:
@@ -318,9 +332,9 @@ def register_doctor(request):
             "doctor_register.master_lookup_exception",
             request_id=request_id,
             email=_mask_email(email),
-            whatsapp=_mask_phone(whatsapp),
+            whatsapp=_mask_phone(doctor_whatsapp),
         )
-        return HttpResponseServerError("Doctor registration failed (master DB lookup).")
+        return HttpResponseServerError(f"Doctor registration failed (master DB lookup). (request_id: {request_id})")
 
     existing_doctor_id = ""
     if existing_doctor_row:
@@ -438,7 +452,7 @@ def register_doctor(request):
             request_id=request_id,
         )
         return HttpResponseServerError(
-            "Doctor registration failed (doctor_id generation)."
+            f"Doctor registration failed (doctor_id generation). (request_id: {request_id})"
         )
 
     photo_path = ""
@@ -456,7 +470,7 @@ def register_doctor(request):
         request_id=request_id,
         doctor_id=doctor_id,
         email=_mask_email(email),
-        whatsapp=_mask_phone(whatsapp),
+        whatsapp=_mask_phone(doctor_whatsapp),
         campaign_id=campaign_id,
         recruited_via=recruited_via,
         has_photo=bool(photo_path),
@@ -467,14 +481,15 @@ def register_doctor(request):
     temp_password = master_db.generate_temporary_password(length=10)
 
     try:
-        master_db.create_doctor_with_enrollment(
+        doctor_id = master_db.create_doctor_with_enrollment(
             doctor_id=doctor_id,
             first_name=cd["first_name"].strip(),
             last_name=(cd.get("last_name") or "").strip(),
             email=email,
-            whatsapp=whatsapp,
+            whatsapp=doctor_whatsapp,
+            receptionist_whatsapp_number=clinic_whatsapp,
             clinic_name=cd["clinic_name"].strip(),
-            clinic_phone=cd["clinic_appointment_number"].strip(),
+            clinic_phone=cd["clinic_number"].strip(),
             clinic_appointment_number=cd["clinic_appointment_number"].strip(),
             clinic_address=cd["clinic_address"].strip(),
             imc_number=cd["imc_registration_number"].strip(),
@@ -531,7 +546,7 @@ def register_doctor(request):
             )
 
         return HttpResponseServerError(
-            "Doctor registration failed. Please try again later."
+            f"Doctor registration failed. Please try again later. (request_id: {request_id})"
         )
 
 
@@ -947,3 +962,4 @@ def _send_master_doctor_access_email(
         to_emails=[to_email],
         plain_text_content="\n".join(body_lines),
     )
+
