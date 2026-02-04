@@ -586,6 +586,7 @@ def register_doctor(request):
                 first_name=cd["first_name"].strip(),
                 last_name=(cd.get("last_name") or "").strip(),
                 temp_password=temp_password,
+                campaign_id=(campaign_id or None),
             )
             _log(
                 "doctor_register.email_master_sent",
@@ -1032,113 +1033,86 @@ def password_reset(request, uidb64: str, token: str):
 
     return render(request, "accounts/password_reset.html", {"form": form})
 
-
 def _send_master_doctor_access_email(
     *,
     doctor_id: str,
-    campaign_id: str | None,
     to_email: str,
     first_name: str,
     last_name: str,
     temp_password: str | None,
+    campaign_id: str | None = None,
 ) -> bool:
-    """
-    Email sent after successfully creating a NEW doctor account in master DB.
-
-    If a campaign has a custom "email_registration" template (publisher.Campaign.email_registration),
-    it is used for the body. Otherwise we fall back to the default body.
-    """
+    """Send campaign-specific registration email if available; fallback to default."""
     full_name = (f"{first_name} {last_name}".strip()) or to_email
 
     clinic_link = _build_absolute_url(reverse("sharing:doctor_share", args=[doctor_id]))
     login_link = _build_absolute_url(reverse("accounts:login"))
 
-    # Default fallback body
-    body_lines = [
-        f"Hello {full_name},",
-        "",
-        "Your CPD in Clinic portal account has been created.",
-        "",
-        f"Doctor ID: {doctor_id}",
-        f"Login link: {login_link}",
-        f"Clinic sharing link: {clinic_link}",
-        "",
-        f"Username: {to_email}",
-    ]
-
-    if temp_password:
-        body_lines.extend(
-            [
-                f"Temporary password: {temp_password}",
-                "",
-                "If you have trouble logging in later, use the 'Forgot Password' link on the login page.",
-            ]
-        )
-    else:
-        body_lines.extend(
-            [
-                "",
-                "Password: (not included)",
-                "Use the 'Forgot Password' link on the login page to set/reset your password.",
-            ]
-        )
-
-    body_lines.append("")
-    body_lines.append("Thank you.")
-    fallback_body = "\n".join(body_lines)
+    def _hyphenate_uuid32(s: str) -> str:
+        t = (s or "").strip().replace("-", "")
+        if len(t) != 32:
+            return s
+        return f"{t[0:8]}-{t[8:12]}-{t[12:16]}-{t[16:20]}-{t[20:32]}"
 
     template_text = ""
     if campaign_id:
         try:
+            cid_raw = (campaign_id or "").strip()
+            cid_norm = cid_raw.replace("-", "")
+            cid_h = _hyphenate_uuid32(cid_raw)
+
             template_text = (
-                Campaign.objects.filter(campaign_id=campaign_id)
+                Campaign.objects.filter(campaign_id__in=[cid_raw, cid_norm, cid_h])
                 .values_list("email_registration", flat=True)
                 .first()
                 or ""
-            )
+            ).strip()
         except Exception:
             template_text = ""
 
-    if template_text and template_text.strip():
-        def _render(template: str) -> str:
-            text = template or ""
-            replacements = {
-                # Doctor identity
-                "<doctor.user.full_name>": full_name,
-                "<doctor_name>": full_name,
-                "{{doctor_name}}": full_name,
+    if template_text:
+        replacements = {
+            "{{doctor_name}}": full_name,
+            "<doctor_name>": full_name,
+            "{{doctor_id}}": doctor_id,
+            "<doctor_id>": doctor_id,
+            "{{username}}": to_email,
+            "{{email}}": to_email,
+            "{{temp_password}}": temp_password or "",
+            "{{password}}": temp_password or "",
+            "{{login_link}}": login_link,
+            "{{clinic_link}}": clinic_link,
+            "<clinic_link>": clinic_link,
+            "<LinkShare>": clinic_link,
+        }
 
-                "<doctor_id>": doctor_id,
-                "{{doctor_id}}": doctor_id,
+        body = template_text
+        for k, v in replacements.items():
+            body = body.replace(k, v)
 
-                "<username>": to_email,
-                "{{username}}": to_email,
-                "<email>": to_email,
-                "{{email}}": to_email,
-
-                # Links
-                "<clinic_link>": clinic_link,
-                "{{clinic_link}}": clinic_link,
-                "<LinkShare>": clinic_link,
-
-                "<login_link>": login_link,
-                "{{login_link}}": login_link,
-
-                # Password
-                "<temp_password>": temp_password or "",
-                "{{temp_password}}": temp_password or "",
-                "<password>": temp_password or "",
-                "{{password}}": temp_password or "",
-            }
-
-            for k, v in replacements.items():
-                # Replace even if v is empty (so placeholders disappear)
-                text = text.replace(k, v or "")
-            return text
-
-        body = _render(template_text).strip() or fallback_body
+        body = body.strip() + "\n"
     else:
-        body = fallback_body
+        lines = [
+            f"Hello {full_name},",
+            "",
+            "Your CPD in Clinic portal account has been created.",
+            "",
+            f"Doctor ID: {doctor_id}",
+            f"Login link: {login_link}",
+            f"Clinic sharing link: {clinic_link}",
+            "",
+            f"Username: {to_email}",
+        ]
+        if temp_password:
+            lines.extend(
+                [
+                    f"Temporary password: {temp_password}",
+                    "",
+                    "If you have trouble logging in later, use the 'Forgot Password' link on the login page.",
+                ]
+            )
+        lines.extend(["", "Thank you."])
+        body = "\n".join(lines)
 
     return send_email_via_sendgrid(
         subject="CPD in Clinic portal access",
