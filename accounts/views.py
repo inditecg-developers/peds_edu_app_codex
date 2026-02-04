@@ -580,13 +580,14 @@ def register_doctor(request):
 
         try:
             ok = _send_master_doctor_access_email(
-                doctor_id=doctor_id,
-                campaign_id=campaign_id or None,
-                to_email=email,
-                first_name=cd["first_name"].strip(),
-                last_name=(cd.get("last_name") or "").strip(),
-                temp_password=temp_password,
-                campaign_id=(campaign_id or None),
+            doctor_id=doctor_id,
+            to_email=email,
+            first_name=cd["first_name"].strip(),
+            last_name=(cd.get("last_name") or "").strip(),
+            temp_password=temp_password,
+            campaign_id=(campaign_id or None),
+                )
+
             )
             _log(
                 "doctor_register.email_master_sent",
