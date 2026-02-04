@@ -529,22 +529,14 @@ legend {
   {% block head %}{% endblock %}
 </head>
 <body>
-  <div class="header">
-    <div class="header-inner">
-      <div class="brand">{% block header_title %}Patient Education{% endblock %}</div>
-      <div>
-        {% if show_auth_links|default:True %}
-          {% if user.is_authenticated %}
-            <span class="muted">{{ user.full_name }}</span>
-            &nbsp;·&nbsp;
-            <a href="{% url 'accounts:logout' %}" class="btn-secondary" style="padding: 6px 12px; font-size: 0.875rem;">Logout</a>
-          {% else %}
-            <a href="{% url 'accounts:login' %}" class="btn-secondary" style="padding: 6px 12px; font-size: 0.875rem;">Login</a>
-          {% endif %}
-        {% endif %}
-      </div>
+<div class="header">
+  <div class="header-inner">
+    <div class="brand">
+      {% block header_title %}Patient Education{% endblock %}
     </div>
   </div>
+</div>
+
 
   <div class="container">
     {% if messages %}
