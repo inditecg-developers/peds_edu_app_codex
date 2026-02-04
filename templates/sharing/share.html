@@ -143,9 +143,13 @@
   .search-wrapper {
     position: relative;
     margin: 16px 0;
+    width: 100%;
   }
 
+  /* Ensure FULL-WIDTH search input on desktop + mobile */
   .search-wrapper input {
+    width: 100%;
+    box-sizing: border-box;
     padding-left: 44px;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E");
     background-repeat: no-repeat;
@@ -153,23 +157,18 @@
     background-size: 20px;
   }
 
+  /* Toolbar: now search-only, always full width */
   .toolbar {
     display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 20px;
+    grid-template-columns: 1fr;
+    gap: 0;
     align-items: end;
     margin: 24px 0;
+    width: 100%;
   }
-
-  @media (max-width: 640px) {
-    .toolbar {
-      grid-template-columns: 1fr;
-      gap: 16px;
-    }
-
-    .toolbar .grow {
-      min-width: 100%;
-    }
+  .toolbar .grow {
+    width: 100%;
+    min-width: 100%;
   }
 
   /* Video List */
@@ -611,6 +610,7 @@
     </div>
   </div>
 
+  {# Search bar full-width (language selector moved below into Share section) #}
   <div class="toolbar">
     <div class="grow">
       <label for="searchBox">Search Bundles / Videos</label>
@@ -622,15 +622,6 @@
           autocomplete="off"
         />
       </div>
-    </div>
-
-    <div style="min-width: 220px;">
-      <label for="lang">Language</label>
-      <select id="lang">
-        {% for code, name in languages %}
-          <option value="{{ code }}">{{ name }}</option>
-        {% endfor %}
-      </select>
     </div>
   </div>
 
@@ -663,6 +654,16 @@
       <div class="hint">
         Enter the patient's 10-digit WhatsApp number (India).
       </div>
+    </div>
+
+    {# Language dropdown moved here (between the above hint line and the Tip block below) #}
+    <div class="form-group" style="margin-top: 14px;">
+      <label for="lang">Language</label>
+      <select id="lang">
+        {% for code, name in languages %}
+          <option value="{{ code }}">{{ name }}</option>
+        {% endfor %}
+      </select>
     </div>
 
     <div class="actions-grid">
