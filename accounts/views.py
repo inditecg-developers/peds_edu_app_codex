@@ -588,7 +588,7 @@ def register_doctor(request):
             campaign_id=(campaign_id or None),
                 )
 
-            )
+            
             _log(
                 "doctor_register.email_master_sent",
                 request_id=request_id,
