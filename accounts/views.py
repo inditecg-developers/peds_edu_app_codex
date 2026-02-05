@@ -272,6 +272,15 @@ def register_doctor(request):
             if cid_alias:
                 initial["campaign_id"] = cid_alias
 
+        # If the field-rep landing page passed a doctor WhatsApp number, prefill the registration form's
+        # clinic WhatsApp field. (The registration form currently collects clinic_whatsapp_number; older
+        # templates do not have a separate whatsapp_number field.)
+        if not (initial.get("clinic_whatsapp_number") or "").strip():
+            wa_prefill = (initial.get("doctor_whatsapp_number") or "").strip()
+            if wa_prefill:
+                initial["clinic_whatsapp_number"] = wa_prefill
+
+
         _log(
             "doctor_register.get",
             request_id=request_id,
@@ -318,8 +327,20 @@ def register_doctor(request):
     cd = form.cleaned_data
 
     email = (cd.get("email") or "").strip().lower()
+
+    # NOTE:
+    # - The public DoctorRegistrationForm currently collects `clinic_whatsapp_number`.
+    # - Some older/alternate templates might post `whatsapp_number` (doctor WhatsApp).
+    # To avoid losing the WhatsApp number (and creating master DB rows with empty whatsapp_no),
+    # we fall back to the clinic WhatsApp and to the field-rep landing-page prefill param.
     doctor_whatsapp = (cd.get("whatsapp_number") or "").strip()
     clinic_whatsapp = (cd.get("clinic_whatsapp_number") or "").strip()
+    if not doctor_whatsapp:
+        doctor_whatsapp = (
+            (request.POST.get("doctor_whatsapp_number") or "").strip()
+            or (request.GET.get("doctor_whatsapp_number") or "").strip()
+            or clinic_whatsapp
+        )
 
     # campaign_id may arrive as hidden field (campaign_id) or as query param alias (campaign-id)
     campaign_id = (
@@ -1120,3 +1141,4 @@ def _send_master_doctor_access_email(
         to_emails=[to_email],
         plain_text_content=body,
     )
+
