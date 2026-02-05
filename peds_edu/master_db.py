@@ -390,6 +390,124 @@ def build_patient_link_payload(doctor: Dict[str, Any], clinic: Dict[str, Any]) -
     }
 
 
+_PATIENT_PAYLOAD_V2 = 2
+
+
+def _compact_patient_payload(payload: Dict[str, Any]) -> Any:
+    """Return a smaller representation of the patient payload for shorter URLs.
+
+    The original payload is a nested dict like:
+      {"v": 1, "doctor": {"user": {"full_name": ...}}, "clinic": {...}}
+
+    This function compacts it to a list:
+      [2, doctor_name, clinic_display_name, clinic_phone, clinic_whatsapp, address_text, state, postal_code]
+
+    unsign_patient_payload() restores the dict structure so the rest of the codebase remains unchanged.
+    """
+    try:
+        doctor = (payload or {}).get("doctor") or {}
+        doctor_user = doctor.get("user") or {}
+        clinic = (payload or {}).get("clinic") or {}
+
+        return [
+            _PATIENT_PAYLOAD_V2,
+            (doctor_user.get("full_name") or "").strip(),
+            (clinic.get("display_name") or "").strip(),
+            (clinic.get("clinic_phone") or "").strip(),
+            (clinic.get("clinic_whatsapp_number") or "").strip(),
+            (clinic.get("address_text") or "").strip(),
+            (clinic.get("state") or "").strip(),
+            (clinic.get("postal_code") or "").strip(),
+        ]
+    except Exception:
+        # If anything unexpected happens, fall back to signing the original payload.
+        return payload
+
+
+def sign_patient_payload(payload: Dict[str, Any]) -> str:
+    """Sign+compress a patient payload for embedding into patient links.
+
+    NOTE: We compact the payload (v2 list format) to shorten the generated URL.
+    """
+    obj: Any = payload
+    if isinstance(payload, dict):
+        obj = _compact_patient_payload(payload)
+
+    return signing.dumps(obj, compress=True)
+
+
+def unsign_patient_payload(token: str) -> Optional[Dict[str, Any]]:
+    """Reverse sign_patient_payload().
+
+    Backward compatible:
+      - Old tokens (dict payloads) still load as dicts.
+      - New tokens load as a v2 list, which is expanded back into the dict structure.
+    """
+    if not token:
+        return None
+
+    try:
+        obj = signing.loads(token, max_age=None)
+    except Exception:
+        return None
+
+    if isinstance(obj, dict):
+        return obj
+
+    # v2 compact list format
+    if isinstance(obj, (list, tuple)) and obj:
+        try:
+            version = obj[0]
+        except Exception:
+            version = None
+
+        if version == _PATIENT_PAYLOAD_V2:
+            parts = list(obj) + [""] * 8  # ensure indexes exist
+
+            doctor_name = str(parts[1] or "")
+            clinic_display_name = str(parts[2] or "")
+            clinic_phone = str(parts[3] or "")
+            clinic_whatsapp = str(parts[4] or "")
+            address_text = str(parts[5] or "")
+            state = str(parts[6] or "")
+            postal_code = str(parts[7] or "")
+
+            return {
+                "v": _PATIENT_PAYLOAD_V2,
+                "doctor": {"user": {"full_name": doctor_name}},
+                "clinic": {
+                    "display_name": clinic_display_name,
+                    "clinic_phone": clinic_phone,
+                    "clinic_whatsapp_number": clinic_whatsapp,
+                    "address_text": address_text,
+                    "state": state,
+                    "postal_code": postal_code,
+                },
+            }
+
+    return None
+def build_patient_link_payload(doctor: Dict[str, Any], clinic: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Payload embedded into patient_link (signed). Keep it small and patient-display-focused.
+    """
+    user = doctor.get("user") if isinstance(doctor.get("user"), dict) else {}
+    return {
+        "doctor": {
+            "doctor_id": doctor.get("doctor_id", ""),
+            "user": {"full_name": user.get("full_name", "")},
+        },
+        "clinic": {
+            "display_name": clinic.get("display_name", ""),
+            "clinic_phone": clinic.get("clinic_phone", ""),
+            "clinic_whatsapp_number": clinic.get("clinic_whatsapp_number", ""),
+            "address_text": clinic.get("address_text", ""),
+            "state": clinic.get("state", ""),
+            "postal_code": clinic.get("postal_code", ""),
+        },
+        "v": 1,  # payload version
+    }
+
+
 def sign_patient_payload(payload: Dict[str, Any]) -> str:
     return signing.dumps(payload, compress=True)
 
@@ -770,3 +888,4 @@ def fetch_pe_campaign_support_for_doctor_email(
         )
 
     return out
+
