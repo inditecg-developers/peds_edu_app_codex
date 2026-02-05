@@ -3,6 +3,17 @@
 {% block header_title %}{{ clinic.display_name }}{% endblock %}
 
 {% block content %}
+
+<style>
+  /* Language-specific font stacks for the few translated label strings on patient pages */
+  .i18n-text.i18n-hi, .i18n-text.i18n-mr { font-family: "Noto Sans Devanagari", "Mangal", "Kohinoor Devanagari", sans-serif; }
+  .i18n-text.i18n-bn { font-family: "Noto Sans Bengali", "Nirmala UI", "Lohit Bengali", sans-serif; }
+  .i18n-text.i18n-ta { font-family: "Noto Sans Tamil", "Nirmala UI", "Lohit Tamil", sans-serif; }
+  .i18n-text.i18n-te { font-family: "Noto Sans Telugu", "Nirmala UI", "Lohit Telugu", sans-serif; }
+  .i18n-text.i18n-kn { font-family: "Noto Sans Kannada", "Nirmala UI", "Lohit Kannada", sans-serif; }
+  .i18n-text.i18n-ml { font-family: "Noto Sans Malayalam", "Nirmala UI", "Lohit Malayalam", sans-serif; }
+</style>
+
 <div class="card">
   <div style="display: flex; align-items: flex-start; gap: 20px; flex-wrap: wrap; padding-bottom: 24px; border-bottom: 1px solid var(--border);">
     <div style="width: 80px; height: 80px; border-radius: 20px; border: 2px solid var(--border); background: linear-gradient(135deg, var(--primary), #3b82f6); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 800; position: relative; overflow: hidden; flex-shrink: 0;">
@@ -28,15 +39,16 @@
       <div class="muted" style="margin-top: 8px; font-size: 0.875rem;">
         <div style="display: inline-flex; align-items: center; gap: 6px;">
           <span style="font-size: 1rem;">📞</span>
-          <span>Clinic phone: {{ clinic.clinic_phone }}</span>
+            <span class="i18n-text i18n-{{ selected_lang }}">{{ ui.clinic_phone }}</span> {{ clinic.clinic_phone }}
         </div>
         {% if clinic.clinic_whatsapp_number %}
           <div style="display: inline-flex; align-items: center; gap: 6px; margin-left: 16px;">
             <span style="font-size: 1rem;">💬</span>
-            <span>WhatsApp: {{ clinic.clinic_whatsapp_number }}</span>
+            <span class="i18n-text i18n-{{ selected_lang }}">{{ ui.whatsapp }}</span> {{ clinic.clinic_whatsapp_number }}
           </div>
         {% endif %}
       </div>
+      <div class="muted" style="margin-top: 10px; font-size: 0.875rem;"><span class="i18n-text i18n-{{ selected_lang }}">{{ ui.educational_content }}</span></div>
     </div>
   </div>
 
@@ -164,3 +176,4 @@
 })();
 </script>
 {% endblock %}
+
