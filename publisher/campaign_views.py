@@ -640,7 +640,10 @@ def field_rep_landing_page(request: HttpRequest) -> HttpResponse:
     # Not found -> redirect to portal registration with params
     # IMPORTANT: pass normalized campaign-id and stable field_rep_id downstream
     register_url = f"{base_url}/accounts/register/"
-    query = _urlencode({"campaign-id": campaign_id_db, "field_rep_id": downstream_field_rep_id})
+    q = {"campaign-id": campaign_id_db, "field_rep_id": downstream_field_rep_id}
+    if wa_number:
+        q["doctor_whatsapp_number"] = wa_number
+    query = _urlencode(q)
     dest = f"{register_url}?{query}"
 
     _plog(
@@ -1295,3 +1298,4 @@ def api_expand_selection(request: HttpRequest) -> JsonResponse:
 
     out = [{"id": v.id, "code": v.code, "title": _video_title_en(v)} for v in videos]
     return JsonResponse({"videos": out})
+
