@@ -486,40 +486,40 @@ def unsign_patient_payload(token: str) -> Optional[Dict[str, Any]]:
             }
 
     return None
-def build_patient_link_payload(doctor: Dict[str, Any], clinic: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Payload embedded into patient_link (signed). Keep it small and patient-display-focused.
-    """
-    user = doctor.get("user") if isinstance(doctor.get("user"), dict) else {}
-    return {
-        "doctor": {
-            "doctor_id": doctor.get("doctor_id", ""),
-            "user": {"full_name": user.get("full_name", "")},
-        },
-        "clinic": {
-            "display_name": clinic.get("display_name", ""),
-            "clinic_phone": clinic.get("clinic_phone", ""),
-            "clinic_whatsapp_number": clinic.get("clinic_whatsapp_number", ""),
-            "address_text": clinic.get("address_text", ""),
-            "state": clinic.get("state", ""),
-            "postal_code": clinic.get("postal_code", ""),
-        },
-        "v": 1,  # payload version
-    }
+# def build_patient_link_payload(doctor: Dict[str, Any], clinic: Dict[str, Any]) -> Dict[str, Any]:
+#     """
+#     Payload embedded into patient_link (signed). Keep it small and patient-display-focused.
+#     """
+#     user = doctor.get("user") if isinstance(doctor.get("user"), dict) else {}
+#     return {
+#         "doctor": {
+#             "doctor_id": doctor.get("doctor_id", ""),
+#             "user": {"full_name": user.get("full_name", "")},
+#         },
+#         "clinic": {
+#             "display_name": clinic.get("display_name", ""),
+#             "clinic_phone": clinic.get("clinic_phone", ""),
+#             "clinic_whatsapp_number": clinic.get("clinic_whatsapp_number", ""),
+#             "address_text": clinic.get("address_text", ""),
+#             "state": clinic.get("state", ""),
+#             "postal_code": clinic.get("postal_code", ""),
+#         },
+#         "v": 1,  # payload version
+#     }
 
 
-def sign_patient_payload(payload: Dict[str, Any]) -> str:
-    return signing.dumps(payload, compress=True)
+# def sign_patient_payload(payload: Dict[str, Any]) -> str:
+#     return signing.dumps(payload, compress=True)
 
 
-def unsign_patient_payload(token: str) -> Optional[Dict[str, Any]]:
-    if not token:
-        return None
-    try:
-        obj = signing.loads(token, max_age=None)
-        return obj if isinstance(obj, dict) else None
-    except Exception:
-        return None
+# def unsign_patient_payload(token: str) -> Optional[Dict[str, Any]]:
+#     if not token:
+#         return None
+#     try:
+#         obj = signing.loads(token, max_age=None)
+#         return obj if isinstance(obj, dict) else None
+#     except Exception:
+#         return None
 
 
 def generate_temporary_password(length: int = 10) -> str:
