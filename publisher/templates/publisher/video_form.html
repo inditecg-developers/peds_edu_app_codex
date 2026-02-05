@@ -32,6 +32,14 @@
 
   <form method="post">
     {% csrf_token %}
+    {{ formset.management_form }}
+
+    {% if formset.non_form_errors %}
+      <div class="card" style="margin: 12px 0; background: #fef2f2; border: 1px solid #fecaca;">
+        {{ formset.non_form_errors }}
+      </div>
+    {% endif %}
+
     {{ form.as_p }}
 
     <h3>Language Details (all languages required)</h3>
@@ -39,7 +47,7 @@
       <tr><th>Language Code</th><th>Title</th><th>YouTube URL</th></tr>
       {% for f in formset.forms %}
       <tr>
-        <td>{{ f.language_code }}</td>
+        <td>{% for hidden in f.hidden_fields %}{{ hidden }}{% endfor %}{{ f.language_code }}</td>
         <td>{{ f.title }}</td>
         <td>{{ f.youtube_url }}</td>
       </tr>
