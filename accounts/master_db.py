@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -173,6 +174,32 @@ def normalize_wa_for_lookup(raw: str) -> str:
     return digits
 
 
+
+
+def build_whatsapp_deeplink(phone_number: str, message: str) -> str:
+    """Build a WhatsApp deep-link (wa.me) for a given phone number and message.
+
+    - Accepts phone number in many common formats (spaces, +91, 0-prefix, etc.)
+    - If a 10-digit number is provided, assumes India and prefixes country code 91.
+    - Message is URL-encoded; newlines become %0A.
+
+    Returns a URL suitable for redirecting a browser (mobile will open WhatsApp app when available).
+    """
+    digits = re.sub(r"\D", "", str(phone_number or ""))
+    if digits:
+        # Drop leading zeros (common when people enter 0XXXXXXXXXX)
+        while digits.startswith("0") and len(digits) > 10:
+            digits = digits[1:]
+
+        # If it looks like an Indian 10-digit mobile number, prefix country code.
+        if len(digits) == 10:
+            digits = "91" + digits
+
+    text = quote(str(message or ""), safe="")
+
+    if digits:
+        return f"https://wa.me/{digits}?text={text}"
+    return f"https://wa.me/?text={text}"
 def _normalize_uuid_for_mysql(value: str) -> str:
     """UUID -> 32hex without hyphens."""
     return (value or "").strip().replace("-", "")
