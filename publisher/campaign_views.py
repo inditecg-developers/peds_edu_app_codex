@@ -94,23 +94,35 @@ class FieldRepWhatsAppForm(forms.Form):
     )
 
 
-def _render_campaign_text_template(template: str, *, doctor_name: str, clinic_link: str, setup_link: str = "") -> str:
+def _render_campaign_text_template(
+    template: str,
+    *,
+    doctor_name: str,
+    clinic_link: str,
+    setup_link: str = "",
+) -> str:
+    """
+    Replace all placeholders unconditionally.
+    Empty values should REMOVE placeholders, not preserve them.
+    """
     text = template or ""
+
     replacements = {
-        "<doctor.user.full_name>": doctor_name,
-        "<doctor_name>": doctor_name,
-        "{{doctor_name}}": doctor_name,
+        "<doctor.user.full_name>": doctor_name or "",
+        "<doctor_name>": doctor_name or "",
+        "{{doctor_name}}": doctor_name or "",
 
-        "<clinic_link>": clinic_link,
-        "{{clinic_link}}": clinic_link,
+        "<clinic_link>": clinic_link or "",
+        "{{clinic_link}}": clinic_link or "",
 
-        "<setup_link>": setup_link,
-        "{{setup_link}}": setup_link,
+        "<setup_link>": setup_link or "",
+        "{{setup_link}}": setup_link or "",
     }
+
     for k, v in replacements.items():
-        if v:
-            text = text.replace(k, v)
-    return text
+        text = text.replace(k, v)
+
+    return text.strip()
 
 
 
