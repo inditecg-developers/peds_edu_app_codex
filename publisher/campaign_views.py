@@ -1,4 +1,6 @@
-from __future__ import annotations
+# Online Python compiler (interpreter) to run Python online.
+# Write Python 3 code in this online editor and run it.
+print("Try programiz.pro")from __future__ import annotations
 import json
 from typing import Any, Dict, List, Set
 from urllib.parse import urlencode
@@ -618,15 +620,30 @@ def field_rep_landing_page(request: HttpRequest) -> HttpResponse:
             setup_link="",
         ).strip()
 
-        lines = []
-        if wa_addition_text:
-            lines.append(wa_addition_text)
-        if campaign.new_video_cluster_name:
-            lines.append(str(campaign.new_video_cluster_name).strip())
-        lines.append("Link to your clinic’s patient education system")
-        lines.append(clinic_link)
+        # Render WhatsApp message STRICTLY from campaign template
+        wa_message = _render_campaign_text_template(
+            campaign.wa_addition or "",
+            doctor_name=(doctor.full_name or "Doctor").strip(),
+            clinic_link=clinic_link,
+            setup_link=f"{base_url}/accounts/login/",
+        ).strip()
+        
+        # Absolute fallback only if template is empty
+        if not wa_message:
+            wa_message = (
+                "Hi {{doctor_name}},\n\n"
+                "Clinic Link:\n"
+                "{{clinic_link}}\n\n"
+                "Password Set/Reset:\n"
+                "{{setup_link}}"
+            )
 
-        whatsapp_url = master_db.build_whatsapp_deeplink(wa_number, "\n".join(lines))
+        
+        whatsapp_url = master_db.build_whatsapp_deeplink(
+            wa_number,
+            wa_message
+        )
+
 
         _plog(
             "field_rep_landing.redirect.whatsapp",
