@@ -1,8 +1,9 @@
-{% extends "base.html" %}
-{% block title %}Registration Complete{% endblock %}
-{% block header_title %}Registration Complete{% endblock %}
+{# {% extends "base.html" %} #}
+{# {% block title %}Registration Complete{% endblock %} #}
+{# {% block header_title %}Registration Complete{% endblock %} #}
 
-{% block content %}
+{# {% block content %} #}
+{# 
 <div class="card">
   <h2>Registration complete</h2>
 
@@ -19,5 +20,12 @@
   <p>
     Next step: <a href="{% url 'accounts:login' %}">Login</a> (if you haven't set a password yet, click "Forgot password" on the login page and we'll send you a password setup link).
   </p>
+</div>
+#}
+
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <p>We have sent the credentials and link to the doctor on mail.</p>
 </div>
 {% endblock %}
