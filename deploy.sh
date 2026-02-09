@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -e
 
-PROJECT_DIR=/home/ubuntu/peds_edu_app
-VENV_DIR=/home/ubuntu/venv
+PROJECT_DIR=/var/www/peds_edu_app_codex
+VENV_DIR=/var/www/venv
 PYTHON=$VENV_DIR/bin/python
 PIP=$VENV_DIR/bin/pip
-SERVICE_NAME=peds_edu   # matches /etc/systemd/system/peds_edu.service
+SERVICE_NAME=peds_edu
 
 cd "$PROJECT_DIR"
 
