@@ -3,7 +3,7 @@ name: Deploy peds_edu_app to EC2
 on:
   push:
     branches:
-      - master     # change to main/testing if that's your deploy branch
+      - master
 
 jobs:
   deploy:
@@ -13,21 +13,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Debug EC2_SSH_KEY presence
-        run: |
-          if [ -z "${{ secrets.EC2_SSH_KEY }}" ]; then
-            echo "ERROR: EC2_SSH_KEY is EMPTY or not visible to this workflow."
-            exit 1
-          else
-            echo "EC2_SSH_KEY is set. Length: $(echo "${{ secrets.EC2_SSH_KEY }}" | wc -c) characters"
-          fi
-
-      - name: Write SSH key to file
+      - name: Setup SSH
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts || true
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
       - name: Sync code to EC2
         run: |
@@ -35,14 +26,10 @@ jobs:
             -e "ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no" \
             --exclude '.git' \
             --exclude '.github' \
-            --exclude '.idea' \
             --exclude 'venv' \
-            --exclude 'media' \
-            --exclude 'staticfiles' \
-            ./ ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:${{ secrets.EC2_TARGET_DIR }}
+            ./ root@${{ secrets.EC2_HOST }}:/var/www/peds_edu_app_codex
 
-      - name: Run deploy script on EC2
+      - name: Run deploy script
         run: |
-          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no \
-            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
-            "cd ${{ secrets.EC2_TARGET_DIR }} && chmod +x deploy.sh && ./deploy.sh"
+          ssh -i ~/.ssh/id_rsa -o StrictHostKeyChecking=no root@${{ secrets.EC2_HOST }} \
+          "cd /var/www/peds_edu_app_codex && chmod +x deploy.sh && ./deploy.sh"
