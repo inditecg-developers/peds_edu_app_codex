@@ -1,31 +1,21 @@
-{# {% extends "base.html" %} #}
-{# {% block title %}Registration Complete{% endblock %} #}
-{# {% block header_title %}Registration Complete{% endblock %} #}
-
-{# {% block content %} #}
-{# 
-<div class="card">
-  <h2>Registration complete</h2>
-
-  <p><strong>Doctor ID:</strong> {{ doctor.doctor_id }}</p>
-  <p><strong>Clinic link (doctor/staff sharing screen):</strong><br/>
-     <a href="{{ clinic_link }}">{{ clinic_link }}</a>
-  </p>
-  <p class="muted">
-    We have also emailed you this link, along with password setup instructions...
-  </p>
-
-  <hr style="margin: 18px 0;"/>
-
-  <p>
-    Next step: <a href="{% url 'accounts:login' %}">Login</a> (if you haven't set a password yet, click "Forgot password" on the login page and we'll send you a password setup link).
-  </p>
-</div>
-#}
-
 {% extends "base.html" %}
+
+{% block title %}Registration Complete{% endblock %}
+
 {% block content %}
 <div class="card">
-  <p>We have sent the credentials and link to the doctor on mail.</p>
+    <h2>Registration Complete</h2>
+
+    <p>
+        We have sent the credentials and clinic link to the doctor via email.
+    </p>
+
+    <hr style="margin: 18px 0;"/>
+
+    <p>
+        Next step:
+        <a href="{% url 'accounts:login' %}">Login</a>
+        (If you haven't set a password yet, click "Forgot password" on the login page and follow the instructions.)
+    </p>
 </div>
 {% endblock %}

@@ -340,7 +340,7 @@ MASTER_DB_ALIAS = "master"
 
 DATABASES[MASTER_DB_ALIAS] = {
     "ENGINE": "django.db.backends.mysql",
-    "NAME": "healthcare_forms",
+    "NAME": "healthcare_forms_2",
     "USER": "admin",
     "PASSWORD": "Hemsod-vytsew-7qypxa",
     "HOST": "new-forms-rds.cbnobb8kfeuq.ap-south-1.rds.amazonaws.com",
